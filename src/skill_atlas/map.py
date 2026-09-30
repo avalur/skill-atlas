@@ -49,15 +49,16 @@ class SkillMapResult(BaseModel):
     )
 
 
-def _extract_skill_keywords(skill: Skill) -> set[str]:
-    """Extract significant keywords from skill name, tags, and description."""
+def _extract_skill_keywords(skill: Skill) -> list[str]:
+    """Extract significant keywords from skill name, tags, and description deterministically."""
     words: set[str] = set()
+    # High-signal tokens: name and tags
     words.update(tokenize_name(skill.name))
     for t in skill.tags:
         words.update(tokenize_name(t))
     desc_words = tokenize_text(skill.description)
     words.update(desc_words[:10])
-    return {w for w in words if len(w) > 2 and w not in STOP_WORDS}
+    return sorted(w for w in words if len(w) > 2 and w not in STOP_WORDS)
 
 
 def group_skills_heuristic(
@@ -79,7 +80,7 @@ def group_skills_heuristic(
 
     if n == 1:
         s = skills[0]
-        kw = sorted(list(_extract_skill_keywords(s))[:3])
+        kw = _extract_skill_keywords(s)[:3]
         name = " ".join(k.capitalize() for k in kw) if kw else s.name.capitalize()
         cluster = SkillCluster(
             name=f"{name} Skill",
@@ -93,8 +94,8 @@ def group_skills_heuristic(
             clusters=[cluster],
         )
 
-    # Compute pairwise similarity and keyword overlaps
-    keyword_map: dict[str, set[str]] = {s.name: _extract_skill_keywords(s) for s in skills}
+    # Compute pairwise similarity and keyword overlaps deterministically
+    keyword_map: dict[str, list[str]] = {s.name: _extract_skill_keywords(s) for s in skills}
 
     # Build adjacency graph based on threshold or strong shared keywords
     adj: dict[str, set[str]] = {name: set() for name in skill_names}
@@ -110,7 +111,7 @@ def group_skills_heuristic(
             sim_scores[(name_a, name_b)] = score
             sim_scores[(name_b, name_a)] = score
 
-            common_kw = keyword_map[name_a] & keyword_map[name_b]
+            common_kw = set(keyword_map[name_a]) & set(keyword_map[name_b])
             # Connect if score exceeds threshold or if they share >= 2 distinctive keywords
             if score >= threshold or len(common_kw) >= 2:
                 adj[name_a].add(name_b)
@@ -132,21 +133,21 @@ def group_skills_heuristic(
                     if neighbor not in visited:
                         visited.add(neighbor)
                         queue.append(neighbor)
-            raw_clusters.append(component)
+            raw_clusters.append(sorted(component))
 
     # Generate Cluster metadata (name, reason, dominant keywords)
     clusters: list[SkillCluster] = []
     unclustered: list[str] = []
 
-    # Sort clusters by size descending
-    raw_clusters.sort(key=lambda c: len(c), reverse=True)
+    # Sort clusters deterministically: size descending, then by first skill name
+    raw_clusters.sort(key=lambda c: (-len(c), c[0] if c else ""))
 
     for comp in raw_clusters:
         if len(comp) == 1:
             s_name = comp[0]
             unclustered.append(s_name)
             s = skill_dict[s_name]
-            kw = sorted(list(keyword_map[s_name])[:3])
+            kw = keyword_map[s_name][:3]
             title = " ".join(k.capitalize() for k in kw) if kw else s_name.capitalize()
             cluster = SkillCluster(
                 name=f"{title} Tools",
@@ -166,8 +167,9 @@ def group_skills_heuristic(
 
         kw_counts = Counter(all_comp_kw)
 
-        # Common to at least 2 members or top overall
-        top_kw = [k for k, count in kw_counts.most_common(4)]
+        # Sort deterministically: highest count first, then alphabetical by keyword
+        sorted_kw = sorted(kw_counts.keys(), key=lambda k: (-kw_counts[k], k))
+        top_kw = sorted_kw[:4]
 
         # Calculate average internal similarity
         pair_scores: list[float] = []

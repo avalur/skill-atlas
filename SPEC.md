@@ -384,3 +384,22 @@ The Skill Map provides high-level functional clustering and thematic visualizati
    - 10-skill benchmark dataset with manual golden groupings to validate and compare clustering quality against human judgment.
 5. **Interactive Web View**:
    - `Skill Map` drawer and interactive cards in Web UI, supporting instant filtering and replayable test fixtures.
+
+---
+
+## 11. Visual Regression Testing & Failure Reporting
+
+Visual testing provides automated pixel-level diffing and actionable failure reporting in CI:
+1. **Deterministic Execution**:
+   - Fixed viewport (`1280x720`), standardized fonts, disabled animations/transitions, and video capture.
+   - Compares captured screens against Git-tracked golden baselines (`tests/visual/baselines/`).
+2. **Failure Serialization (`failures.json`)**:
+   - Failed comparisons are serialized to `artifacts/visual/failures.json` containing test metadata, diff statistics, and repo-relative paths to `expected`, `actual`, and `diff` PNG images.
+3. **Automated Asset Publication (`scripts/publish-assets.sh`)**:
+   - On visual test failures, CI commits differing screenshots directly to the orphan `demo-assets` branch without dirtying the working directory.
+   - Generates permanent, immutable raw GitHub URLs for all snapshot assets.
+4. **Rich Multi-Channel Reporting (`scripts/visual-report.sh` / `scripts/ui-report.sh`)**:
+   - **Terminal Log**: Displays failed test titles, locations, diff percentages, and direct image links.
+   - **GitHub Actions Annotations**: Emits `::error` annotations directly on the failed file/line with diff links.
+   - **Job Summary**: Appends an image table (`Expected | Actual | Diff`) rendering screenshots side by side to `$GITHUB_STEP_SUMMARY`.
+   - **Remediation**: Displays exact copy-paste command (`UPDATE_BASELINES=1 uv run pytest tests/visual`) to re-render baselines when changes are intentional.

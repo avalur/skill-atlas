@@ -86,8 +86,14 @@ Visual regression testing protects the Skill Atlas Web UI against CSS breakages,
   Commit the updated PNG files in `tests/visual/baselines/` in your PR branch. CI compares against the committed baselines and turns green.
 - **Intentional Breakage Test**:
   `tests/visual/test_break_page.py` injects style distortions and verifies that regressions are caught, side-by-side diff highlight images are generated (`artifacts/visual/diffs/breakage_diff.png`), and diagnostic instructions are provided.
-- **CI Pipeline**:
-  Dedicated `visual-tests` job in `.github/workflows/ci.yml` runs on `ubuntu-latest`, caches Chromium (`~/.cache/ms-playwright`), and exports artifacts (`visual-artifacts-${{ github.sha }}`) containing captured screens, walkthrough video (`video_walkthrough.webm`), diffs, and interactive HTML summary report (`report.html`).
+- **CI Pipeline & Failure Reporting**:
+  - Dedicated `visual-tests` job in `.github/workflows/ci.yml` runs on `ubuntu-latest`, caches Chromium (`~/.cache/ms-playwright`), and exports artifacts (`visual-artifacts-${{ github.sha }}`) containing captured screens, walkthrough video (`video_walkthrough.webm`), diffs, and interactive HTML summary report (`report.html`).
+  - **Explain Failures in CI**: The job is granted `permissions: contents: write`. When a visual test detects regressions, it records snapshots in `artifacts/visual/failures.json`.
+  - Step `Explain failures` (`if: failure()`) executes `scripts/visual-report.sh` (or `scripts/ui-report.sh`):
+    - Invokes `scripts/publish-assets.sh` to commit expected, actual, and diff screenshots directly to the orphan `demo-assets` branch without modifying working tree or branch history.
+    - Emits GitHub Actions `::error` annotations linking directly to the visual diff.
+    - Appends a markdown table (`Expected | Actual | Diff`) rendering screenshots side-by-side to `$GITHUB_STEP_SUMMARY`.
+    - Outputs clear copy-paste guidance for updating baselines if the visual changes were intended.
 
 ## 6. The Skill Map Workflow
 Generating thematic and semantic skill maps:
