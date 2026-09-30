@@ -28,6 +28,8 @@ skill-atlas/
 ├── README.md              # Project overview and quickstart
 ├── SPEC.md                # Current iteration specification (CLI MVP)
 ├── pyproject.toml         # Project manifest and dependencies (uv)
+├── .github/
+│   └── pull_request_template.md # PR template with mandatory demo video section
 ├── memory/                # Shared project memory across AI agent sessions
 │   ├── README.md          # Index and guide to shared memory
 │   ├── architecture.md    # System architecture, engine pipeline, and Web UI
@@ -78,15 +80,16 @@ Integration tests for every case in the spec (every rule, every CLI option, ever
 
 ## Git & Pull Request Workflow
 - **Branching Policy**: Never commit or push directly to `main`. Every change (feature, bugfix, refactoring, doc update) must be developed in a dedicated branch (e.g. `feat/...`, `fix/...`, `docs/...`).
-- **Pull Requests**: Open a pull request against `main` using `gh pr create` with a concise title and description.
+- **Pull Requests**: Open a pull request against `main` using `gh pr create` adhering to `.github/pull_request_template.md`. Feature PRs must always include a demo video / recording illustrating the feature.
 - **Verification & CI**: Ensure all local tests and linter checks pass before pushing (`uv run pytest && uv run ruff check . && uv run ruff format --check .`). Verify CI checks are green on the Pull Request.
 - **Merge**: Merge to `main` only via Pull Request after CI passes and user approval.
 
 ## Definition of Done
 - All tests pass locally: `uv run pytest`
 - Lint and format are clean: `uv run ruff check . && uv run ruff format --check .`
+- Feature demo video / recording attached in the PR description (mandatory for all feature PRs)
 - Changes committed and pushed to a dedicated feature branch (never push directly to `main`)
-- Pull Request created against `main` via `gh pr create`
+- Pull Request created against `main` via `gh pr create` following `.github/pull_request_template.md`
 - CI is green for the Pull Request
 - Red CI: read the logs (`gh run view --log-failed`), fix, push again
 
@@ -100,5 +103,5 @@ Integration tests for every case in the spec (every rule, every CLI option, ever
 4. **Git Provenance**: When scanning Git repositories (local or remote), always record the repository name, skill name, description, and the commit hash/date where the skill first appeared.
 5. **Test Fixtures**: Every new schema or security rule must include a minimal fixture in `tests/fixtures/` covering both positive and negative cases.
 6. **Output Format Support**: Always maintain structured JSON export capabilities alongside rich terminal output for CI/CD pipelines and agent workflows.
-7. **Pull Request Workflow**: All new changes, fixes, and features must be submitted via Pull Requests from a dedicated feature branch. Direct pushes to `main` are strictly prohibited.
+7. **Pull Request Workflow**: All new changes, fixes, and features must be submitted via Pull Requests from a dedicated feature branch adhering to `.github/pull_request_template.md`. Direct pushes to `main` are strictly prohibited. Feature PRs must always include a demo video / recording demonstrating the new capabilities.
 8. **Shared Memory Maintenance**: Always read `memory/` before starting a task to understand project context and history. Always update `memory/` using the `shared-memory` skill whenever new patterns or decisions emerge.

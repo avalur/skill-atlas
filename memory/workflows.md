@@ -27,10 +27,15 @@ Direct pushes to `main` are **strictly prohibited**. Every change follows the PR
    git commit -m "feat: description" --trailer "Co-authored-by: Junie <junie@jetbrains.com>"
    ```
 4. **Push & Open Pull Request**:
+   Follow `.github/pull_request_template.md` when preparing the pull request description:
    ```bash
    git push -u origin <branch-name>
-   gh pr create --title "type(scope): concise title" --body "Concise summary of changes and verification"
+   gh pr create --title "type(scope): concise title" --body-file .github/pull_request_template.md
+   # Or provide populated summary, changes, demo video, and verification:
+   # gh pr create --title "type(scope): concise title" --body "..."
    ```
+   **Mandatory Feature Demos**: Every feature PR must include a video demonstration (MP4 recording or animated GIF) illustrating the functionality (e.g., recorded with `browser-video-tester` or screen capture).
+
 5. **CI Verification**:
    Monitor GitHub Actions CI checks (`ubuntu-latest` and `macos-latest` on Python 3.11 and 3.13):
    ```bash
@@ -49,7 +54,8 @@ A task is considered complete only when:
 - [x] All unit and integration tests pass locally (`uv run pytest`).
 - [x] Ruff linter and formatter checks are clean.
 - [x] Spec (`SPEC.md`) and memory (`memory/`) are updated in the same change when applicable.
-- [x] Feature branch pushed and PR opened via `gh pr create`.
+- [x] Feature demo video / recording attached in the Pull Request description (mandatory for all feature PRs).
+- [x] Pull Request created following `.github/pull_request_template.md` via `gh pr create`.
 - [x] CI checks pass on GitHub Actions across the full OS/Python matrix.
 - [x] Pull Request is cleanly merged into `main`.
 
