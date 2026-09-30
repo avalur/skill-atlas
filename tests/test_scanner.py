@@ -1,0 +1,218 @@
+"""Comprehensive tests for Skill Atlas scanner, rules, and CLI."""
+
+import json
+from pathlib import Path
+
+from typer.testing import CliRunner
+
+from skill_atlas.cli import app
+from skill_atlas.git.client import parse_github_url
+from skill_atlas.models import Severity, Skill
+from skill_atlas.rules.schema import BrokenLinkReferenceRule
+from skill_atlas.scanner import Scanner
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+runner = CliRunner()
+
+
+def test_parse_github_url():
+    assert parse_github_url("https://github.com/JetBrains/kotlin") == ("JetBrains", "kotlin")
+    assert parse_github_url("https://github.com/JetBrains/kotlin.git") == ("JetBrains", "kotlin")
+    assert parse_github_url("git@github.com:JetBrains/kotlin.git") == ("JetBrains", "kotlin")
+    assert parse_github_url("https://gitlab.com/org/repo") is None
+
+
+def test_valid_skill_scan():
+    valid_dir = FIXTURES_DIR / "valid_skill"
+    scanner = Scanner()
+    result = scanner.scan(valid_dir)
+
+    assert result.summary.total_skills == 1
+    assert result.summary.passed == 1
+    assert result.summary.failed == 0
+    assert result.summary.findings_count["error"] == 0
+
+    skill = result.skills[0]
+    assert skill.valid is True
+    assert skill.name == "sample-valid-skill"
+    assert "A fully compliant" in skill.description
+    assert skill.version == "1.0.0"
+    assert len(skill.findings) == 0
+
+
+def test_rule_sch_002_broken_frontmatter():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "broken_frontmatter"
+    scanner = Scanner(rules_category="schema")
+    result = scanner.scan(skill_dir)
+
+    assert result.summary.total_skills == 1
+    skill = result.skills[0]
+    assert skill.valid is False
+    assert any(f.rule_id == "SCH-002" for f in skill.findings)
+
+
+def test_rule_sch_003_missing_required_fields():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "missing_fields"
+    scanner = Scanner(rules_category="schema")
+    result = scanner.scan(skill_dir)
+
+    skill = result.skills[0]
+    assert skill.valid is False
+    assert any(f.rule_id == "SCH-003" for f in skill.findings)
+
+
+def test_rule_sch_004_invalid_name():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "invalid_name"
+    scanner = Scanner(rules_category="schema")
+    result = scanner.scan(skill_dir)
+
+    skill = result.skills[0]
+    assert any(f.rule_id == "SCH-004" and f.severity == Severity.WARN for f in skill.findings)
+
+
+def test_rule_sch_005_short_description():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "short_description"
+    scanner = Scanner(rules_category="schema")
+    result = scanner.scan(skill_dir)
+
+    skill = result.skills[0]
+    assert any(f.rule_id == "SCH-005" and f.severity == Severity.WARN for f in skill.findings)
+
+
+def test_rule_sch_006_broken_link():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "broken_link"
+    scanner = Scanner(rules_category="schema")
+    result = scanner.scan(skill_dir)
+
+    skill = result.skills[0]
+    assert skill.valid is False
+    assert any(f.rule_id == "SCH-006" for f in skill.findings)
+
+
+def test_rule_sch_006_repo_relative_and_root_links():
+    rule = BrokenLinkReferenceRule()
+
+    # Skill with valid repo-relative link and root-relative link
+    skill = Skill(
+        name="test-repo-links",
+        description="A skill referencing repo-relative and root-relative files",
+        path=".claude/skills/my-skill",
+        referenced_files=[
+            "../../../compiler/tests/Test.kt",
+            "/docs/guidelines.md",
+            "scripts/helper.sh",
+        ],
+        available_files=["scripts/helper.sh", "SKILL.md"],
+        repo_files=[
+            "compiler/tests/Test.kt",
+            "docs/guidelines.md",
+            ".claude/skills/my-skill/SKILL.md",
+            ".claude/skills/my-skill/scripts/helper.sh",
+        ],
+    )
+    findings = rule.check(skill)
+    assert len(findings) == 0
+
+    # Skill with non-existent repo-relative link
+    broken_skill = Skill(
+        name="test-broken-repo-links",
+        description="A skill referencing missing repo-relative files",
+        path=".claude/skills/my-skill",
+        referenced_files=["../../../compiler/missing/NotFound.kt"],
+        available_files=["SKILL.md"],
+        repo_files=["compiler/tests/Test.kt"],
+    )
+    findings = rule.check(broken_skill)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "SCH-006"
+
+    # Skill attempting to escape repository root
+    escaping_skill = Skill(
+        name="test-escaping-repo-links",
+        description="A skill referencing files outside repo root",
+        path=".claude/skills/my-skill",
+        referenced_files=["../../../../../../etc/passwd"],
+        available_files=["SKILL.md"],
+        repo_files=["compiler/tests/Test.kt"],
+    )
+    findings = rule.check(escaping_skill)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "SCH-006"
+
+
+def test_rule_sec_001_hardcoded_secrets():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "security_secrets"
+    scanner = Scanner(rules_category="security")
+    result = scanner.scan(skill_dir)
+
+    skill = result.skills[0]
+    assert skill.valid is False
+    secret_findings = [f for f in skill.findings if f.rule_id == "SEC-001"]
+    assert len(secret_findings) >= 3
+
+
+def test_rule_sec_002_dangerous_command():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "security_dangerous_cmd"
+    scanner = Scanner(rules_category="security")
+    result = scanner.scan(skill_dir)
+
+    skill = result.skills[0]
+    assert skill.valid is False
+    assert any(f.rule_id == "SEC-002" for f in skill.findings)
+
+
+def test_rule_sec_003_unsafe_network_execution():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "security_unsafe_net"
+    scanner = Scanner(rules_category="security")
+    result = scanner.scan(skill_dir)
+
+    skill = result.skills[0]
+    assert any(f.rule_id == "SEC-003" and f.severity == Severity.WARN for f in skill.findings)
+
+
+def test_rule_sec_004_sensitive_path_access():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "security_sensitive_paths"
+    scanner = Scanner(rules_category="security")
+    result = scanner.scan(skill_dir)
+
+    skill = result.skills[0]
+    assert any(f.rule_id == "SEC-004" and f.severity == Severity.WARN for f in skill.findings)
+
+
+def test_rule_sec_005_prompt_injection():
+    skill_dir = FIXTURES_DIR / "vulnerable_skills" / "security_prompt_injection"
+    scanner = Scanner(rules_category="security")
+    result = scanner.scan(skill_dir)
+
+    skill = result.skills[0]
+    assert any(f.rule_id == "SEC-005" and f.severity == Severity.WARN for f in skill.findings)
+
+
+def test_cli_scan_valid_target():
+    res = runner.invoke(app, ["scan", str(FIXTURES_DIR / "valid_skill")])
+    assert res.exit_code == 0
+    assert "sample-valid-skill" in res.stdout
+    assert "Status: SUCCESS" in res.stdout
+
+
+def test_cli_scan_failure_and_exit_code():
+    res = runner.invoke(app, ["scan", str(FIXTURES_DIR / "vulnerable_skills" / "security_secrets")])
+    assert res.exit_code == 1
+    assert "SEC-001" in res.stdout
+    assert "Status: FAILED" in res.stdout
+
+
+def test_cli_scan_ignore_rule():
+    target = str(FIXTURES_DIR / "vulnerable_skills" / "security_secrets")
+    res = runner.invoke(app, ["scan", target, "--ignore", "SEC-001"])
+    assert res.exit_code == 0
+
+
+def test_cli_json_format():
+    target = str(FIXTURES_DIR / "valid_skill")
+    res = runner.invoke(app, ["scan", target, "--format", "json"])
+    assert res.exit_code == 0
+    data = json.loads(res.stdout)
+    assert data["version"] == "0.1.0"
+    assert data["summary"]["total_skills"] == 1
+    assert data["skills"][0]["name"] == "sample-valid-skill"
