@@ -183,11 +183,14 @@ skill-atlas serve [OPTIONS]
 - `--port`: Server bind port (default: `8765`).
 - `--open`: Open browser automatically upon startup.
 - `--allow-local`: Allow scanning local filesystem paths via web interface.
+- `--reload`: Enable auto-reload on code changes (development).
 - **Web UI Features**:
+  - Theme switcher between light and dark modes with manual toggle and system preference detection (persisted in `localStorage`).
   - Real-time scan progress bar and GitHub rate limit indicator.
   - Interactive skill catalog with pass/fail badges, findings breakdown, and duplicate origin badges.
-  - Interactive filter chips by origin (`All`, `Agent Config`, `Product`, `Standalone`, `Test Data`).
-  - Search filter input to filter skills in real time by words in names and descriptions.
+  - Interactive filter chips by origin (`All`, `Agent Config`, `Product`, `Standalone`, `Test Data`) and status filtering (`All statuses`, `Passed only`, `Failed only`).
+  - Search filter input to filter skills in real time by words in names, descriptions, tags, and paths.
+  - Interactive Similar Skills panel supporting customizable similarity threshold (`0.3` - `0.8`), repository-wide match discovery, and direct per-skill similarity search from catalog items.
   - Export full scan results as JSON.
 
 ### 4.4. `similar` Command Syntax:
