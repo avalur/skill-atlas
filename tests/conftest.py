@@ -125,6 +125,8 @@ def create_fake_github_transport(
     rate_limit_remaining: int = 60,
     simulate_rate_limit: bool = False,
     simulate_truncated_tree: bool = False,
+    simulate_saml_sso: bool = False,
+    private_repo: bool = False,
 ) -> httpx.MockTransport:
     """Create an httpx.MockTransport that emulates the GitHub API and raw content endpoints."""
 
@@ -145,6 +147,19 @@ def create_fake_github_transport(
                 },
             )
 
+        if simulate_saml_sso and request.headers.get("Authorization"):
+            return httpx.Response(
+                403,
+                headers={
+                    **headers,
+                    "x-github-sso": "required; url=https://github.com/enterprises/example/sso?authorization_request=test_sso",
+                },
+                json={"message": "Resource protected by organization SAML enforcement"},
+            )
+
+        if private_repo and not request.headers.get("Authorization"):
+            return httpx.Response(404, headers=headers, json={"message": "Not Found"})
+
         # 1. Repository metadata endpoint: GET /repos/{owner}/{repo}
         if re.search(r"^https://api\.github\.com/repos/[^/]+/[^/]+$", url_str):
             if "not-found" in url_str:
@@ -161,6 +176,12 @@ def create_fake_github_transport(
 
         # 2. Recursive git tree: GET /repos/{owner}/{repo}/git/trees/{branch}?recursive=1
         if "/git/trees/" in url_str:
+            match_tree = re.search(r"/git/trees/([^?]+)", request.url.path)
+            if match_tree:
+                branch_in_url = match_tree.group(1)
+                if branch_in_url not in (default_branch, "master", "main", "HEAD"):
+                    return httpx.Response(404, headers=headers, json={"message": "Not Found"})
+
             tree_items = []
             for path_str, content in files.items():
                 tree_items.append(
@@ -179,6 +200,22 @@ def create_fake_github_transport(
                     "sha": "tree_root_sha",
                     "tree": tree_items,
                     "truncated": simulate_truncated_tree,
+                },
+            )
+
+        # 2b. Rate limit endpoint: GET /rate_limit
+        if "/rate_limit" in url_str:
+            return httpx.Response(
+                200,
+                headers=headers,
+                json={
+                    "resources": {
+                        "core": {
+                            "limit": 5000,
+                            "remaining": 0 if simulate_rate_limit else rate_limit_remaining,
+                            "reset": 1780000000,
+                        }
+                    }
                 },
             )
 

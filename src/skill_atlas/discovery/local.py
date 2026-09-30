@@ -1,7 +1,6 @@
 """Local filesystem discovery for AI Agent Skills."""
 
 import datetime
-import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -12,7 +11,12 @@ from skill_atlas.git.client import (
     get_repo_info,
     is_git_repository,
 )
-from skill_atlas.models import Skill, classify_origin
+from skill_atlas.models import (
+    BINARY_EXTENSIONS,
+    Skill,
+    calculate_content_hash,
+    classify_origin,
+)
 from skill_atlas.parsers.markdown import parse_skill_markdown
 
 IGNORED_DIRS = {
@@ -22,21 +26,28 @@ IGNORED_DIRS = {
     "node_modules",
     "__pycache__",
     ".pytest_cache",
-    ".junie",
     ".idea",
     ".vscode",
 }
 
 
-def _collect_skill_files(skill_dir: Path) -> tuple[list[str], dict[str, str]]:
+def _collect_skill_files(
+    skill_dir: Path, all_manifest_dirs: set[Path] | None = None
+) -> tuple[list[str], dict[str, str]]:
     """Collect companion file paths and text contents inside skill directory."""
     files: list[str] = []
     contents: dict[str, str] = {}
     resolved_skill_dir = skill_dir.resolve()
+    manifest_dirs = all_manifest_dirs or set()
 
     for root, dirs, filenames in os.walk(skill_dir):
-        # Prune ignored dirs
-        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
+        # Prune ignored dirs and nested child skill directories (M4 fix)
+        dirs[:] = [
+            d
+            for d in dirs
+            if d not in IGNORED_DIRS
+            and (Path(root) / d).resolve() not in (manifest_dirs - {resolved_skill_dir})
+        ]
         for f in filenames:
             abs_f = Path(root) / f
             # Check symlink destination
@@ -52,6 +63,10 @@ def _collect_skill_files(skill_dir: Path) -> tuple[list[str], dict[str, str]]:
                 rel_path = str(abs_f.relative_to(skill_dir))
                 files.append(rel_path)
             except ValueError:
+                continue
+
+            # Skip binary files by extension
+            if abs_f.suffix.lower() in BINARY_EXTENSIONS:
                 continue
 
             # Read text files if under 1MB and non-binary
@@ -88,17 +103,6 @@ def _collect_git_repo_files(repo_root: Path) -> list[str]:
     return []
 
 
-def _calculate_content_hash(companion_contents: dict[str, str]) -> str:
-    """Calculate a deterministic sha256 hash of all text contents in the skill."""
-    hasher = hashlib.sha256()
-    for rel_p in sorted(companion_contents.keys()):
-        hasher.update(rel_p.encode("utf-8"))
-        hasher.update(b"\x00")
-        hasher.update(companion_contents[rel_p].encode("utf-8"))
-        hasher.update(b"\x00")
-    return hasher.hexdigest()
-
-
 def discover_local_skills(target_path: Path) -> list[Skill]:
     """Discover all skills in the given local directory or file path."""
     skills: list[Skill] = []
@@ -131,6 +135,7 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
                         manifest_paths.append(p)
 
     # Process each discovered manifest
+    all_manifest_dirs = {m.parent.resolve() for m in manifest_paths}
     for manifest in manifest_paths:
         skill_dir = manifest.parent
         resolved_skill_dir = skill_dir.resolve()
@@ -187,7 +192,9 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
             commit_sha, commit_date = get_file_provenance(repo_root, manifest_rel_path)
             updated_sha, updated_date = get_directory_last_commit(repo_root, rel_skill_path)
 
-        available_files, companion_contents = _collect_skill_files(skill_dir)
+        available_files, companion_contents = _collect_skill_files(
+            skill_dir, all_manifest_dirs=all_manifest_dirs
+        )
         if raw_content is not None:
             companion_contents["SKILL.md"] = raw_content
 
@@ -203,14 +210,14 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
                     pass
             if latest_mtime > 0:
                 dt = datetime.datetime.fromtimestamp(latest_mtime, tz=datetime.UTC)
-                updated_date = dt.isoformat()
+                updated_date = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                 updated_source = "mtime"
             elif commit_date:
                 updated_date = commit_date
                 updated_sha = commit_sha
 
         origin = classify_origin(rel_skill_path)
-        content_hash = _calculate_content_hash(companion_contents)
+        content_hash = calculate_content_hash(companion_contents)
 
         skill = Skill(
             name=parse_info["name"],

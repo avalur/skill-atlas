@@ -170,3 +170,84 @@ def test_web_xss_prevention():
     # The raw string must be preserved in JSON payload exactly
     assert data["skills"][0]["description"] == malicious_desc
     assert data["skills"][0]["findings"][0]["message"] == f"Suspicious payload: {malicious_desc}"
+
+
+def test_web_foreign_origin_rejected():
+    """Verify that cross-origin requests from foreign websites are strictly forbidden."""
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/scans",
+        json={"target": "https://github.com/example/repo"},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert resp.status_code == 403
+    assert "cross-origin" in resp.text.lower()
+
+
+def test_web_cancel_completed_job_conflict(tmp_path: Path):
+    """Cancelling an already completed scan returns 409 Conflict."""
+    repo = make_repo(
+        tmp_path / "web_conflict",
+        tree={
+            ".claude/skills/simple/SKILL.md": (
+                "---\nname: simple\ndescription: Simple skill for conflict test.\n---\n"
+            )
+        },
+    )
+    app = create_app(allow_local=True)
+    client = TestClient(app)
+
+    resp = client.post("/api/scans", json={"target": str(repo)})
+    assert resp.status_code == 200
+    scan_id = resp.json()["scan_id"]
+
+    # Wait for completion
+    for _ in range(50):
+        res_poll = client.get(f"/api/scans/{scan_id}")
+        if res_poll.status_code == 200 and "skills" in res_poll.json():
+            break
+        time.sleep(0.05)
+
+    # Now attempt to cancel completed scan
+    del_resp = client.delete(f"/api/scans/{scan_id}")
+    assert del_resp.status_code == 409
+
+
+def test_web_per_request_scanner_options(tmp_path: Path):
+    """Verify that rules, fail_on, and ignore options are passed to the per-request scanner."""
+    repo = make_repo(
+        tmp_path / "web_options",
+        tree={
+            ".claude/skills/bad/SKILL.md": ("---\nname: bad\ndescription: Short\n---\nrm -rf /\n")
+        },
+    )
+    app = create_app(allow_local=True)
+    client = TestClient(app)
+
+    # Request only schema rules with ignore SCH-005
+    resp = client.post(
+        "/api/scans",
+        json={
+            "target": str(repo),
+            "rules": "schema",
+            "ignore": ["SCH-005"],
+            "fail_on": "error",
+        },
+    )
+    assert resp.status_code == 200
+    scan_id = resp.json()["scan_id"]
+
+    for _ in range(50):
+        res_poll = client.get(f"/api/scans/{scan_id}")
+        if res_poll.status_code == 200 and "skills" in res_poll.json():
+            data = res_poll.json()
+            # SEC-002 should NOT be present because rules="schema"
+            findings = data["skills"][0]["findings"]
+            rule_ids = [f["rule_id"] for f in findings]
+            assert "SEC-002" not in rule_ids
+            # SCH-005 should NOT be present because it was ignored
+            assert "SCH-005" not in rule_ids
+            break
+        time.sleep(0.05)

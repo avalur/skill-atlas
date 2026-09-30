@@ -2,15 +2,17 @@
 
 import asyncio
 import os
+import queue
+import secrets
 import threading
 import uuid
 import webbrowser
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from skill_atlas import __version__
 from skill_atlas.git.client import parse_github_url
@@ -164,6 +166,7 @@ HTML_CONTENT = """<!DOCTYPE html>
   </div>
 
   <script>
+    const CSRF_TOKEN = "{{CSRF_TOKEN}}";
     let currentScanId = null;
     let eventSource = null;
     let scanResult = null;
@@ -199,7 +202,10 @@ HTML_CONTENT = """<!DOCTYPE html>
       try {
         const resp = await fetch('/api/scans', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-SkillAtlas-Token': CSRF_TOKEN
+          },
           body: JSON.stringify({
             target: target,
             ref: ref,
@@ -256,6 +262,10 @@ HTML_CONTENT = """<!DOCTYPE html>
 
       eventSource.onerror = () => {
         eventSource.close();
+        document.getElementById('status-spinner').textContent = '✖';
+        document.getElementById('status-text').textContent = 'Connection closed or lost.';
+        document.getElementById('scan-btn').disabled = false;
+        document.getElementById('cancel-btn').style.display = 'none';
       };
     }
 
@@ -274,7 +284,10 @@ HTML_CONTENT = """<!DOCTYPE html>
 
     async function cancelScan() {
       if (!currentScanId) return;
-      await fetch(`/api/scans/${currentScanId}`, { method: 'DELETE' });
+      await fetch(`/api/scans/${currentScanId}`, {
+        method: 'DELETE',
+        headers: { 'X-SkillAtlas-Token': CSRF_TOKEN }
+      });
       document.getElementById('status-text').textContent = 'Scan cancelled.';
       document.getElementById('cancel-btn').style.display = 'none';
       document.getElementById('scan-btn').disabled = false;
@@ -327,9 +340,10 @@ HTML_CONTENT = """<!DOCTYPE html>
         const titleDiv = document.createElement('div');
         titleDiv.className = 'skill-title';
 
+        const isPassing = (sk.passing !== undefined && sk.passing !== null) ? sk.passing : sk.valid;
         const statusBadge = document.createElement('span');
-        statusBadge.className = 'badge ' + (sk.valid ? 'badge-success' : 'badge-error');
-        statusBadge.textContent = sk.valid ? 'PASS' : 'FAIL';
+        statusBadge.className = 'badge ' + (isPassing ? 'badge-success' : 'badge-error');
+        statusBadge.textContent = isPassing ? 'PASS' : 'FAIL';
 
         const nameSpan = document.createElement('span');
         nameSpan.textContent = sk.name;
@@ -361,8 +375,14 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         const meta = document.createElement('div');
         meta.className = 'skill-meta';
-        meta.innerHTML = `<span>Path: <b>${escapeHtml(sk.path)}</b></span>` +
-          (sk.updated_date ? `<span>Updated: <b>${escapeHtml(sk.updated_date)}</b></span>` : '');
+        const pSpan = document.createElement('span');
+        pSpan.textContent = `Path: ${sk.path}`;
+        meta.appendChild(pSpan);
+        if (sk.updated_date) {
+          const uSpan = document.createElement('span');
+          uSpan.textContent = `Updated: ${sk.updated_date}`;
+          meta.appendChild(uSpan);
+        }
         item.appendChild(meta);
 
         if (sk.duplicates && sk.duplicates.length > 0) {
@@ -370,12 +390,15 @@ HTML_CONTENT = """<!DOCTYPE html>
           dupSection.style.fontSize = '0.8rem';
           dupSection.style.color = 'var(--text-muted)';
           dupSection.style.marginBottom = '0.5rem';
-          let dupHtml = 'Other copies: ';
+          const dupLabel = document.createElement('div');
+          dupLabel.textContent = 'Other copies:';
+          dupSection.appendChild(dupLabel);
           sk.duplicates.forEach(d => {
             const status = d.identical ? 'identical' : 'differs';
-            dupHtml += `<div>• ${escapeHtml(d.path)} (${escapeHtml(d.updated_date || '')}) [${status}]</div>`;
+            const dRow = document.createElement('div');
+            dRow.textContent = `• ${d.path} (${d.updated_date || ''}) [${status}]`;
+            dupSection.appendChild(dRow);
           });
-          dupSection.innerHTML = dupHtml;
           item.appendChild(dupSection);
         }
 
@@ -386,8 +409,20 @@ HTML_CONTENT = """<!DOCTYPE html>
             const fRow = document.createElement('div');
             fRow.className = 'finding-row';
             const badgeClass = f.severity === 'ERROR' ? 'badge-error' : f.severity === 'WARN' ? 'badge-warn' : 'badge-primary';
+            const bSpan = document.createElement('span');
+            bSpan.className = `badge ${badgeClass}`;
+            bSpan.textContent = f.severity;
+            fRow.appendChild(bSpan);
+
+            const ruleB = document.createElement('b');
+            ruleB.textContent = ` ${f.rule_id}`;
+            fRow.appendChild(ruleB);
+
             const loc = f.file ? ` (${f.file}${f.line ? ':' + f.line : ''})` : '';
-            fRow.innerHTML = `<span class="badge ${badgeClass}">${f.severity}</span> <b>${escapeHtml(f.rule_id)}</b>: ${escapeHtml(f.message)}${escapeHtml(loc)}`;
+            const msgSpan = document.createElement('span');
+            msgSpan.textContent = `: ${f.message}${loc}`;
+            fRow.appendChild(msgSpan);
+
             findingsList.appendChild(fRow);
           }
           item.appendChild(findingsList);
@@ -426,8 +461,8 @@ HTML_CONTENT = """<!DOCTYPE html>
 class ScanRequest(BaseModel):
     target: str
     ref: str | None = None
-    fail_on: str = "error"
-    rules: str = "all"
+    fail_on: Literal["error", "warn"] = "error"
+    rules: Literal["all", "schema", "security", "discovery"] = "all"
     ignore: list[str] = Field(default_factory=list)
     include_test_data: bool = False
 
@@ -445,6 +480,7 @@ class ScanJob:
         self.cancel_event = threading.Event()
         self.listeners: list[asyncio.Queue[ProgressEvent]] = []
         self.loop: asyncio.AbstractEventLoop | None = None
+        self.lock = threading.Lock()
 
     def add_event(self, event: ProgressEvent) -> None:
         self.events.append(event)
@@ -452,25 +488,77 @@ class ScanJob:
             for q in list(self.listeners):
                 self.loop.call_soon_threadsafe(q.put_nowait, event)
 
-    def cancel(self) -> None:
-        self.cancel_event.set()
-        self.status = "cancelled"
-        self.error = "Scan cancelled by user"
+    def cancel(self) -> bool:
+        with self.lock:
+            if self.status in ("completed", "failed", "cancelled"):
+                return False
+            self.cancel_event.set()
+            self.status = "cancelled"
+            self.error = "Scan cancelled by user"
+            return True
 
 
 class JobManager:
-    """In-memory coordinator for background scans."""
+    """In-memory coordinator for background scans with bounded concurrency and LRU eviction."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_jobs: int = 20) -> None:
         self.jobs: dict[str, ScanJob] = {}
         self.lock = threading.Lock()
+        self.max_jobs = max_jobs
+        self.queue: queue.Queue[tuple[ScanJob, Scanner]] = queue.Queue()
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_thread.start()
 
     def create_job(self, req: ScanRequest) -> ScanJob:
         with self.lock:
+            # Evict oldest completed/failed/cancelled jobs if limit reached (M7)
+            finished_keys = [
+                jid
+                for jid, j in self.jobs.items()
+                if j.status in ("completed", "failed", "cancelled")
+            ]
+            while len(self.jobs) >= self.max_jobs and finished_keys:
+                evict_id = finished_keys.pop(0)
+                self.jobs.pop(evict_id, None)
+
             job_id = str(uuid.uuid4())
             job = ScanJob(job_id, req)
             self.jobs[job_id] = job
             return job
+
+    def enqueue(self, job: ScanJob, scanner: Scanner) -> None:
+        self.queue.put((job, scanner))
+
+    def _worker_loop(self) -> None:
+        while True:
+            job, scanner = self.queue.get()
+            try:
+                with job.lock:
+                    if job.status == "cancelled":
+                        continue
+                    job.status = "running"
+                try:
+                    res = scanner.scan(
+                        target=job.request.target,
+                        ref=job.request.ref,
+                        include_test_data=job.request.include_test_data,
+                        on_progress=job.add_event,
+                        cancel_event=job.cancel_event,
+                    )
+                    with job.lock:
+                        if job.status != "cancelled":
+                            job.result = res
+                            job.status = "completed"
+                except Exception as err:  # noqa: BLE001
+                    with job.lock:
+                        if job.cancel_event.is_set() or job.status == "cancelled":
+                            job.status = "cancelled"
+                            job.error = "Scan cancelled by user"
+                        else:
+                            job.status = "failed"
+                            job.error = str(err)
+            finally:
+                self.queue.task_done()
 
     def get_job(self, job_id: str) -> ScanJob | None:
         with self.lock:
@@ -484,19 +572,32 @@ def create_app(
 ) -> FastAPI:
     """Create configured FastAPI application."""
     app = FastAPI(title="Skill Atlas Web", version=__version__)
+    app.state.csrf_token = secrets.token_hex(16)
+
     app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        TrustedHostMiddleware,
+        allowed_hosts=["127.0.0.1", "localhost", "testserver"],
     )
 
     manager = job_manager or JobManager()
-    base_scanner = scanner or Scanner()
 
     @app.middleware("http")
-    async def add_security_headers(request: Request, call_next: Any) -> Response:
+    async def origin_and_security_headers(request: Request, call_next: Any) -> Response:
+        origin = request.headers.get("origin")
+        if origin:
+            clean_origin = origin.rstrip("/")
+            allowed = (
+                "http://127.0.0.1",
+                "http://localhost",
+                "http://testserver",
+                "https://testserver",
+            )
+            if not any(clean_origin == a or clean_origin.startswith(f"{a}:") for a in allowed):
+                return Response(
+                    content='{"detail": "Forbidden: cross-origin requests are not allowed"}',
+                    status_code=403,
+                    media_type="application/json",
+                )
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
@@ -505,21 +606,29 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return HTML_CONTENT
+        return HTML_CONTENT.replace("{{CSRF_TOKEN}}", app.state.csrf_token)
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         gh_client = GitHubClient(token=token)
+        rem = gh_client.get_rate_limit()
         return {
             "version": __version__,
             "status": "healthy",
-            "github_token_configured": bool(token),
-            "rate_limit_remaining": gh_client.rate_limit_remaining,
+            "github_token_configured": bool(gh_client.token),
+            "rate_limit_remaining": rem,
         }
 
     @app.post("/api/scans")
-    def start_scan(req: ScanRequest) -> dict[str, str]:
+    def start_scan(req: ScanRequest, request: Request) -> dict[str, str]:
+        # Validate CSRF token if Origin header is present
+        origin = request.headers.get("origin")
+        if origin:
+            tok = request.headers.get("x-skillatlas-token")
+            if tok != app.state.csrf_token:
+                raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
         target = req.target.strip()
         # Input validation per SPEC
         is_gh = parse_github_url(target) is not None
@@ -532,30 +641,13 @@ def create_app(
                 )
 
         job = manager.create_job(req)
-
-        # Run scan in worker thread
-        def run_worker() -> None:
-            job.status = "running"
-            try:
-                res = base_scanner.scan(
-                    target=req.target,
-                    ref=req.ref,
-                    include_test_data=req.include_test_data,
-                    on_progress=job.add_event,
-                    cancel_event=job.cancel_event,
-                )
-                job.result = res
-                job.status = "completed"
-            except Exception as err:  # noqa: BLE001
-                if job.cancel_event.is_set():
-                    job.status = "cancelled"
-                    job.error = "Scan cancelled by user"
-                else:
-                    job.status = "failed"
-                    job.error = str(err)
-
-        thread = threading.Thread(target=run_worker, daemon=True)
-        thread.start()
+        scan_to_use = scanner or Scanner(
+            rules_category=req.rules,
+            ignored_rules=req.ignore,
+            fail_on=req.fail_on,
+            include_test_data=req.include_test_data,
+        )
+        manager.enqueue(job, scan_to_use)
         return {"scan_id": job.id}
 
     @app.get("/api/scans/{scan_id}/events")
@@ -616,11 +708,22 @@ def create_app(
         return {"status": job.status, "message": "Scan in progress"}
 
     @app.delete("/api/scans/{scan_id}")
-    def cancel_scan_endpoint(scan_id: str) -> dict[str, str]:
+    def cancel_scan_endpoint(scan_id: str, request: Request) -> dict[str, str]:
+        origin = request.headers.get("origin")
+        if origin:
+            tok = request.headers.get("x-skillatlas-token")
+            if tok != app.state.csrf_token:
+                raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
         job = manager.get_job(scan_id)
         if not job:
             raise HTTPException(status_code=404, detail="Scan not found")
-        job.cancel()
+        success = job.cancel()
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot cancel scan in '{job.status}' state",
+            )
         return {"status": "cancelled"}
 
     return app

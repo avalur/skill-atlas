@@ -140,3 +140,113 @@ def test_remote_and_local_parity(tmp_path: Path, cli_runner: CliRunner):
     assert local_skill["valid"] == remote_skill["valid"]
     assert local_skill["origin"] == remote_skill["origin"]
     assert len(local_skill["findings"]) == len(remote_skill["findings"])
+
+
+def test_remote_explicit_ref_not_found():
+    """M1: An explicit --ref that does not exist raises a clear error and does not silently scan master."""
+    files = {".claude/skills/tool/SKILL.md": "---\nname: tool\ndescription: Tool.\n---\n"}
+    transport = create_fake_github_transport(files=files)
+
+    with httpx.Client(transport=transport) as http_client:
+        gh_client = GitHubClient(token="mock-token")
+        scanner = Scanner()
+        import pytest
+
+        with pytest.raises(ValueError, match="not found"):
+            scanner.scan(
+                target="https://github.com/example/repo",
+                ref="non-existent-branch-xyz",
+                http_client=http_client,
+                gh_client=gh_client,
+            )
+
+
+def test_remote_and_local_parity_script_without_extension(tmp_path: Path, cli_runner: CliRunner):
+    """M3: Both local and remote scan companion scripts without extensions (e.g. scripts/run)."""
+    skill_content = (
+        "---\n"
+        "name: extensionless-script-tool\n"
+        "description: Tests scanning scripts without extension.\n"
+        "---\n"
+        "# Tool\n"
+        "References [run](scripts/run)\n"
+    )
+    script_content = "#!/bin/bash\nrm -rf /\n"
+    files = {
+        ".claude/skills/tool/SKILL.md": skill_content,
+        ".claude/skills/tool/scripts/run": script_content,
+    }
+
+    # 1. Local scan
+    local_repo = make_repo(tmp_path / "extless_repo", tree=files)
+    local_res = cli_runner.invoke(app, ["scan", str(local_repo), "--format", "json"])
+    assert local_res.exit_code == 1
+    local_data = json.loads(local_res.stdout)
+    local_rules = [f["rule_id"] for f in local_data["skills"][0]["findings"]]
+    assert "SEC-002" in local_rules
+
+    # 2. Remote scan
+    transport = create_fake_github_transport(files=files)
+    with httpx.Client(transport=transport) as http_client:
+        gh_client = GitHubClient()
+        scanner = Scanner()
+        remote_result = scanner.scan(
+            target="https://github.com/example/repo",
+            http_client=http_client,
+            gh_client=gh_client,
+        )
+        remote_data = json.loads(remote_result.model_dump_json())
+        remote_rules = [f["rule_id"] for f in remote_data["skills"][0]["findings"]]
+        assert "SEC-002" in remote_rules
+
+
+def test_remote_saml_sso_fallback_public_repo():
+    """When a public repository enforces SAML SSO on the token, fallback to unauthenticated succeeds."""
+    files = {
+        ".claude/skills/sso-public/SKILL.md": (
+            "---\nname: sso-public\ndescription: Skill in SAML SSO public repo.\n---\n# Info\n"
+        )
+    }
+    transport = create_fake_github_transport(
+        files=files,
+        simulate_saml_sso=True,
+        private_repo=False,
+    )
+    with httpx.Client(transport=transport) as http_client:
+        gh_client = GitHubClient(token="unauthorized-saml-token")
+        scanner = Scanner()
+        result = scanner.scan(
+            target="https://github.com/example/sso-public-repo",
+            http_client=http_client,
+            gh_client=gh_client,
+        )
+        assert result.summary.total_skills == 1
+        assert result.skills[0].name == "sso-public"
+        assert gh_client._auth_disabled is True
+
+
+def test_remote_saml_sso_private_repo_raises_error():
+    """When a private repository enforces SAML SSO, unauthenticated fallback gets 404 and raises informative SSO error."""
+    files = {
+        ".claude/skills/sso-private/SKILL.md": (
+            "---\nname: sso-private\ndescription: Skill in SAML SSO private repo.\n---\n# Info\n"
+        )
+    }
+    transport = create_fake_github_transport(
+        files=files,
+        simulate_saml_sso=True,
+        private_repo=True,
+    )
+    with httpx.Client(transport=transport) as http_client:
+        gh_client = GitHubClient(token="unauthorized-saml-token")
+        scanner = Scanner()
+        import pytest
+
+        with pytest.raises(
+            RuntimeError, match="GitHub organization SAML SSO authorization required"
+        ):
+            scanner.scan(
+                target="https://github.com/example/sso-private-repo",
+                http_client=http_client,
+                gh_client=gh_client,
+            )

@@ -11,21 +11,33 @@ import urllib.parse
 import httpx
 
 from skill_atlas import __version__
+from skill_atlas.models import parse_utc_timestamp
 
 
 class RateLimitError(RuntimeError):
     """Raised when GitHub API rate limit is exhausted."""
 
-    def __init__(self, reset_epoch: int | None = None) -> None:
+    def __init__(self, reset_epoch: int | None = None, token_configured: bool = False) -> None:
+        self.reset_epoch = reset_epoch
+        self.token_configured = token_configured
         if reset_epoch:
             reset_time = datetime.datetime.fromtimestamp(reset_epoch, tz=datetime.UTC).strftime(
                 "%H:%M UTC"
             )
-            msg = f"GitHub rate limit reached, resets at {reset_time}; set GITHUB_TOKEN"
+            if token_configured:
+                msg = (
+                    f"GitHub rate limit reached, resets at {reset_time}; "
+                    "set GITHUB_TOKEN or check quota (configured token exhausted)"
+                )
+            else:
+                msg = f"GitHub rate limit reached, resets at {reset_time}; set GITHUB_TOKEN"
         else:
-            msg = "GitHub rate limit reached; set GITHUB_TOKEN"
+            msg = (
+                "GitHub rate limit reached; set GITHUB_TOKEN or check quota (configured token exhausted)"
+                if token_configured
+                else "GitHub rate limit reached; set GITHUB_TOKEN"
+            )
         super().__init__(msg)
-        self.reset_epoch = reset_epoch
 
 
 class GitHubClient:
@@ -48,13 +60,14 @@ class GitHubClient:
         self.raw_base = "https://raw.githubusercontent.com"
         self.rate_limit_remaining: int | None = None
         self.rate_limit_reset: int | None = None
+        self._auth_disabled: bool = False
 
     def _get_headers(self, with_auth: bool = True) -> dict[str, str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": f"SkillAtlas-Scanner/{__version__}",
         }
-        if with_auth and self.token:
+        if with_auth and self.token and not self._auth_disabled:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
@@ -75,16 +88,71 @@ class GitHubClient:
         if resp.status_code == 403 and (
             self.rate_limit_remaining == 0 or "rate limit" in resp.text.lower()
         ):
-            raise RateLimitError(self.rate_limit_reset)
+            raise RateLimitError(self.rate_limit_reset, token_configured=bool(self.token))
+
+    def _is_repo_public(self, client: httpx.Client, owner: str, repo: str) -> bool:
+        """Check if repository is publicly accessible without authentication."""
+        try:
+            r = client.get(
+                f"{self.api_base}/repos/{owner}/{repo}",
+                headers=self._get_headers(with_auth=False),
+            )
+            self._record_rate_limit(r)
+            return r.status_code == 200
+        except Exception:  # noqa: BLE001
+            return False
 
     def _request(self, client: httpx.Client, url: str) -> httpx.Response:
         """Execute request with automatic fallback to unauthenticated request on 401/403."""
         resp = client.get(url, headers=self._get_headers(with_auth=True))
         self._record_rate_limit(resp)
 
-        if resp.status_code in (401, 403) and self.token:
+        if resp.status_code in (401, 403) and self.token and not self._auth_disabled:
+            if resp.status_code == 401:
+                # Token is invalid or revoked: try unauthenticated request
+                resp_unauth = client.get(url, headers=self._get_headers(with_auth=False))
+                self._record_rate_limit(resp_unauth)
+                if resp_unauth.status_code == 200:
+                    self._auth_disabled = True
+                    return resp_unauth
+                raise ValueError(
+                    "GitHub authentication failed: configured GITHUB_TOKEN is invalid or revoked"
+                )
+
             sso_hdr = resp.headers.get("x-github-sso", "")
-            if "organization saml enforcement" in resp.text.lower() or sso_hdr:
+            is_sso = "organization saml enforcement" in resp.text.lower() or bool(sso_hdr)
+
+            # Check if rate limit exhausted
+            if self.rate_limit_remaining == 0 or "rate limit" in resp.text.lower():
+                raise RateLimitError(self.rate_limit_reset, token_configured=True)
+
+            # Fall back to unauthenticated request
+            resp_unauth = client.get(url, headers=self._get_headers(with_auth=False))
+            self._record_rate_limit(resp_unauth)
+
+            if resp_unauth.status_code == 200:
+                if is_sso:
+                    self._auth_disabled = True
+                return resp_unauth
+
+            if is_sso:
+                # If unauth was not 200, check if the repo itself is public
+                # (e.g. 404 on a non-existent branch of a public repo)
+                repo_match = re.search(r"https://api\.github\.com/repos/([^/]+)/([^/?]+)", url)
+                if repo_match:
+                    owner, repo = repo_match.group(1), repo_match.group(2)
+                    repo_url = f"{self.api_base}/repos/{owner}/{repo}"
+                    if url == repo_url:
+                        # Already queried the repo root and it was not 200
+                        is_public = False
+                    else:
+                        is_public = self._is_repo_public(client, owner, repo)
+
+                    if is_public:
+                        self._auth_disabled = True
+                        return resp_unauth
+
+                # Repository is private or requires SAML SSO
                 sso_match = re.search(r"url=([^\s;]+)", sso_hdr)
                 sso_url = sso_match.group(1) if sso_match else None
                 msg = "GitHub organization SAML SSO authorization required for your token."
@@ -92,12 +160,27 @@ class GitHubClient:
                     msg += f"\nPlease authorize your token at: {sso_url}"
                 raise RuntimeError(msg)
 
-            # Fall back to unauthenticated request if it wasn't a rate limit issue
-            if self.rate_limit_remaining != 0 and "rate limit" not in resp.text.lower():
-                resp = client.get(url, headers=self._get_headers(with_auth=False))
-                self._record_rate_limit(resp)
+            return resp_unauth
 
         return resp
+
+    def get_rate_limit(self, client: httpx.Client | None = None) -> int | None:
+        """Query current rate limit remaining from GitHub API."""
+        url = f"{self.api_base}/rate_limit"
+        close_client = False
+        c = client
+        if c is None:
+            c = httpx.Client(timeout=10.0)
+            close_client = True
+        try:
+            resp = c.get(url, headers=self._get_headers(with_auth=True))
+            self._record_rate_limit(resp)
+            return self.rate_limit_remaining
+        except Exception:  # noqa: BLE001
+            return self.rate_limit_remaining
+        finally:
+            if close_client:
+                c.close()
 
     def get_default_branch(self, client: httpx.Client, owner: str, repo: str) -> str:
         """Determine default branch of repository (main, master, etc.)."""
@@ -111,13 +194,19 @@ class GitHubClient:
         return "main"
 
     def fetch_all_paths(
-        self, client: httpx.Client, owner: str, repo: str, branch: str
+        self,
+        client: httpx.Client,
+        owner: str,
+        repo: str,
+        branch: str,
+        is_explicit_ref: bool = False,
     ) -> tuple[str, list[dict], bool]:
         """Fetch full recursive tree of repository.
 
         Returns (branch_used, tree_items, is_truncated).
         """
-        for target_branch in (branch, "master", "main"):
+        branches_to_try = (branch,) if is_explicit_ref else (branch, "master", "main")
+        for target_branch in branches_to_try:
             url = f"{self.api_base}/repos/{owner}/{repo}/git/trees/{target_branch}?recursive=1"
             resp = self._request(client, url)
             if resp.status_code == 404:
@@ -127,6 +216,8 @@ class GitHubClient:
                 tree = data.get("tree", [])
                 truncated = bool(data.get("truncated", False))
                 return target_branch, tree, truncated
+        if is_explicit_ref:
+            raise ValueError(f"Git ref '{branch}' not found in GitHub repository '{owner}/{repo}'")
         return branch, [], False
 
     def fetch_file_content(
@@ -136,7 +227,7 @@ class GitHubClient:
         quoted_path = urllib.parse.quote(file_path.lstrip("/"))
         url = f"{self.raw_base}/{owner}/{repo}/{branch}/{quoted_path}"
         headers = {"User-Agent": f"SkillAtlas-Scanner/{__version__}"}
-        if self.token:
+        if self.token and not self._auth_disabled:
             headers["Authorization"] = f"Bearer {self.token}"
 
         resp = client.get(url, headers=headers)
@@ -146,7 +237,7 @@ class GitHubClient:
 
         # If authenticated raw request failed (e.g. 404 due to token/SAML restrictions on public repos),
         # fall back to unauthenticated raw request
-        if resp.status_code in (401, 403, 404) and self.token:
+        if resp.status_code in (401, 403, 404) and self.token and not self._auth_disabled:
             unauth_headers = {"User-Agent": f"SkillAtlas-Scanner/{__version__}"}
             resp_unauth = client.get(url, headers=unauth_headers)
             self._record_rate_limit(resp_unauth)
@@ -229,5 +320,10 @@ class GitHubClient:
             oldest_commit = oldest.get("commit", {})
             oldest_author = oldest_commit.get("author", {}) or oldest_commit.get("committer", {})
             oldest_date = oldest_author.get("date")
+
+        if oldest_date:
+            oldest_date = parse_utc_timestamp(oldest_date).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if newest_date:
+            newest_date = parse_utc_timestamp(newest_date).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         return oldest_sha, oldest_date, newest_sha, newest_date
