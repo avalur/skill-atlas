@@ -86,7 +86,7 @@ my-sample-skill/
 - **Target Ingestion**:
   - The CLI accepts a target `TARGET` which can be:
     - **Local Directory / Repository**: Path to a local folder or cloned Git repository. If the path is inside a Git repository, repository metadata and commit history are evaluated automatically.
-    - **Remote Git Repository**: URL to a remote Git repository (e.g. `https://github.com/owner/repo.git`, `git@github.com:...`). The scanner scans the repository via the GitHub REST API and raw file downloads (without cloning), discovers skills, extracts provenance, and performs scanning.
+    - **Remote Git Repository**: URL to a remote Git repository (e.g. `https://github.com/owner/repo.git`, `git@github.com:...`). The scanner scans the repository via the GitHub REST API and raw file downloads (without cloning), discovers skills, extracts provenance, and performs scanning. If a configured token encounters SAML SSO organization enforcement when accessing a public repository, the client automatically falls back to unauthenticated requests to complete the scan seamlessly.
     - **Single Skill Directory**: Path pointing directly to a directory containing `SKILL.md`.
 - **Recursive Skill Discovery**:
   - All subdirectories containing a valid `SKILL.md` are discovered.

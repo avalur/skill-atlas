@@ -60,13 +60,14 @@ class GitHubClient:
         self.raw_base = "https://raw.githubusercontent.com"
         self.rate_limit_remaining: int | None = None
         self.rate_limit_reset: int | None = None
+        self._auth_disabled: bool = False
 
     def _get_headers(self, with_auth: bool = True) -> dict[str, str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": f"SkillAtlas-Scanner/{__version__}",
         }
-        if with_auth and self.token:
+        if with_auth and self.token and not self._auth_disabled:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
@@ -89,19 +90,69 @@ class GitHubClient:
         ):
             raise RateLimitError(self.rate_limit_reset, token_configured=bool(self.token))
 
+    def _is_repo_public(self, client: httpx.Client, owner: str, repo: str) -> bool:
+        """Check if repository is publicly accessible without authentication."""
+        try:
+            r = client.get(
+                f"{self.api_base}/repos/{owner}/{repo}",
+                headers=self._get_headers(with_auth=False),
+            )
+            self._record_rate_limit(r)
+            return r.status_code == 200
+        except Exception:  # noqa: BLE001
+            return False
+
     def _request(self, client: httpx.Client, url: str) -> httpx.Response:
         """Execute request with automatic fallback to unauthenticated request on 401/403."""
         resp = client.get(url, headers=self._get_headers(with_auth=True))
         self._record_rate_limit(resp)
 
-        if resp.status_code in (401, 403) and self.token:
+        if resp.status_code in (401, 403) and self.token and not self._auth_disabled:
             if resp.status_code == 401:
+                # Token is invalid or revoked: try unauthenticated request
+                resp_unauth = client.get(url, headers=self._get_headers(with_auth=False))
+                self._record_rate_limit(resp_unauth)
+                if resp_unauth.status_code == 200:
+                    self._auth_disabled = True
+                    return resp_unauth
                 raise ValueError(
                     "GitHub authentication failed: configured GITHUB_TOKEN is invalid or revoked"
                 )
 
             sso_hdr = resp.headers.get("x-github-sso", "")
-            if "organization saml enforcement" in resp.text.lower() or sso_hdr:
+            is_sso = "organization saml enforcement" in resp.text.lower() or bool(sso_hdr)
+
+            # Check if rate limit exhausted
+            if self.rate_limit_remaining == 0 or "rate limit" in resp.text.lower():
+                raise RateLimitError(self.rate_limit_reset, token_configured=True)
+
+            # Fall back to unauthenticated request
+            resp_unauth = client.get(url, headers=self._get_headers(with_auth=False))
+            self._record_rate_limit(resp_unauth)
+
+            if resp_unauth.status_code == 200:
+                if is_sso:
+                    self._auth_disabled = True
+                return resp_unauth
+
+            if is_sso:
+                # If unauth was not 200, check if the repo itself is public
+                # (e.g. 404 on a non-existent branch of a public repo)
+                repo_match = re.search(r"https://api\.github\.com/repos/([^/]+)/([^/?]+)", url)
+                if repo_match:
+                    owner, repo = repo_match.group(1), repo_match.group(2)
+                    repo_url = f"{self.api_base}/repos/{owner}/{repo}"
+                    if url == repo_url:
+                        # Already queried the repo root and it was not 200
+                        is_public = False
+                    else:
+                        is_public = self._is_repo_public(client, owner, repo)
+
+                    if is_public:
+                        self._auth_disabled = True
+                        return resp_unauth
+
+                # Repository is private or requires SAML SSO
                 sso_match = re.search(r"url=([^\s;]+)", sso_hdr)
                 sso_url = sso_match.group(1) if sso_match else None
                 msg = "GitHub organization SAML SSO authorization required for your token."
@@ -109,10 +160,7 @@ class GitHubClient:
                     msg += f"\nPlease authorize your token at: {sso_url}"
                 raise RuntimeError(msg)
 
-            # Fall back to unauthenticated request if it wasn't a rate limit issue
-            if self.rate_limit_remaining != 0 and "rate limit" not in resp.text.lower():
-                resp = client.get(url, headers=self._get_headers(with_auth=False))
-                self._record_rate_limit(resp)
+            return resp_unauth
 
         return resp
 
@@ -179,7 +227,7 @@ class GitHubClient:
         quoted_path = urllib.parse.quote(file_path.lstrip("/"))
         url = f"{self.raw_base}/{owner}/{repo}/{branch}/{quoted_path}"
         headers = {"User-Agent": f"SkillAtlas-Scanner/{__version__}"}
-        if self.token:
+        if self.token and not self._auth_disabled:
             headers["Authorization"] = f"Bearer {self.token}"
 
         resp = client.get(url, headers=headers)
@@ -189,7 +237,7 @@ class GitHubClient:
 
         # If authenticated raw request failed (e.g. 404 due to token/SAML restrictions on public repos),
         # fall back to unauthenticated raw request
-        if resp.status_code in (401, 403, 404) and self.token:
+        if resp.status_code in (401, 403, 404) and self.token and not self._auth_disabled:
             unauth_headers = {"User-Agent": f"SkillAtlas-Scanner/{__version__}"}
             resp_unauth = client.get(url, headers=unauth_headers)
             self._record_rate_limit(resp_unauth)

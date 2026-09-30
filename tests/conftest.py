@@ -125,6 +125,8 @@ def create_fake_github_transport(
     rate_limit_remaining: int = 60,
     simulate_rate_limit: bool = False,
     simulate_truncated_tree: bool = False,
+    simulate_saml_sso: bool = False,
+    private_repo: bool = False,
 ) -> httpx.MockTransport:
     """Create an httpx.MockTransport that emulates the GitHub API and raw content endpoints."""
 
@@ -144,6 +146,19 @@ def create_fake_github_transport(
                     "documentation_url": "https://docs.github.com",
                 },
             )
+
+        if simulate_saml_sso and request.headers.get("Authorization"):
+            return httpx.Response(
+                403,
+                headers={
+                    **headers,
+                    "x-github-sso": "required; url=https://github.com/enterprises/example/sso?authorization_request=test_sso",
+                },
+                json={"message": "Resource protected by organization SAML enforcement"},
+            )
+
+        if private_repo and not request.headers.get("Authorization"):
+            return httpx.Response(404, headers=headers, json={"message": "Not Found"})
 
         # 1. Repository metadata endpoint: GET /repos/{owner}/{repo}
         if re.search(r"^https://api\.github\.com/repos/[^/]+/[^/]+$", url_str):
