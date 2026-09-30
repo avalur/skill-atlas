@@ -356,3 +356,13 @@ Status: FAILED (Exit Code 1)
 1. **Skill Formats**: Is supporting `SKILL.md` (frontmatter + markdown) sufficient for Iteration 1, or might standalone `skill.yaml` / `skill.json` files be needed during the workshop?
 2. **Security Rule Severity**: Should `SEC-005` (prompt injection heuristic) default to `WARN` or `ERROR`?
 3. **Package Manager & Toolchain**: Confirmed (`uv` and Python 3.11+ approved as standard toolchain).
+
+---
+
+## 9. Live QA Browser Video Testing (`browser-video-tester`)
+
+The `browser-video-tester` agent skill enables autonomous, human-like QA testing of web features:
+1. **Visual Simulation**: Renders a floating on-screen cursor with click ripples and action title banners.
+2. **Live Video Capture**: Generates high-fps recordings of browser flows and converts them to `.mp4` using `ffmpeg`.
+3. **Automated Audit**: Audits browser JavaScript console errors and HTTP network failures.
+4. **Structured Artifacts**: Outputs `test_session.mp4`, `report.md`, `timeline.json`, and step keyframe screenshots under `artifacts/browser_tests/`.

@@ -76,3 +76,6 @@ Thumbs.db
 .output.txt
 tmp/
 sbx-*.sh
+artifacts/
+*.webm
+*.mp4

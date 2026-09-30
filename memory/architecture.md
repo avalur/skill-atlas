@@ -75,3 +75,10 @@ Calculates composite similarity across skills:
 - Markdown body structure / prompt headings similarity (weight: 0.15).
 - Companion script filenames overlap (weight: 0.10).
 The composite score is between `0.0` and `1.0`. Thresholds default to `0.5`, with UI options ranging from `0.3` to `0.8`.
+
+## 6. Live QA Browser Video Testing (`browser-video-tester`)
+Inspired by `browser-use/video-use`, the project incorporates an autonomous browser testing skill:
+- **Playwright Harness**: Drives real browser interactions (smooth mouse movements, ripple clicks, human typing delays).
+- **In-DOM Visual Cursor & Subtitle Banners**: Renders a floating pointer and action step overlays directly in the browser viewport.
+- **Universal MP4 Encoding**: Converts raw recordings to standard H.264/AAC `.mp4` using `ffmpeg`.
+- **Self-Evaluation & Artifacts**: Collects console errors, network failures, keyframe screenshots, `timeline.json`, and structured `report.md`.
