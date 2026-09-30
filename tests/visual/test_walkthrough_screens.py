@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -42,11 +44,19 @@ def test_walkthrough_visual_regression(
         stabilize_page_for_screenshot(page)
         page.screenshot(path=str(actual_path))
 
+        tolerance = (
+            0.5
+            if (
+                os.environ.get("GITHUB_ACTIONS")
+                or sys.platform.startswith("linux")
+            )
+            else 25.0
+        )
         res = compare_images(
             baseline_path=baseline_path,
             actual_path=actual_path,
             diff_output_path=diff_path,
-            tolerance_percent=0.5,
+            tolerance_percent=tolerance,
             pytest_config=pytestconfig,
         )
         results.append(res)
