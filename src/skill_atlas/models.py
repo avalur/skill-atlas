@@ -1,5 +1,9 @@
 """Data models for Skill Atlas."""
 
+from __future__ import annotations
+
+import datetime
+import hashlib
 import re
 from collections.abc import Callable
 from enum import StrEnum
@@ -8,6 +12,77 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from skill_atlas import __version__
+
+BINARY_EXTENSIONS: set[str] = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".webp",
+    ".bmp",
+    ".tiff",
+    ".pdf",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".xz",
+    ".7z",
+    ".rar",
+    ".jar",
+    ".war",
+    ".ear",
+    ".class",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".bin",
+    ".dat",
+    ".pyc",
+    ".pyo",
+    ".pyd",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".otf",
+    ".mp3",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".flv",
+    ".webm",
+}
+
+
+def parse_utc_timestamp(dt_str: str | None) -> datetime.datetime:
+    """Parse ISO 8601 date string and convert to timezone-aware UTC datetime."""
+    if not dt_str:
+        return datetime.datetime.min.replace(tzinfo=datetime.UTC)
+    try:
+        cleaned = dt_str.replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(cleaned)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=datetime.UTC)
+        return dt.astimezone(datetime.UTC)
+    except (ValueError, TypeError):
+        return datetime.datetime.min.replace(tzinfo=datetime.UTC)
+
+
+def calculate_content_hash(companion_contents: dict[str, str]) -> str:
+    """Calculate a deterministic sha256 hash of all text contents in the skill."""
+    hasher = hashlib.sha256()
+    for rel_p in sorted(companion_contents.keys()):
+        hasher.update(rel_p.encode("utf-8"))
+        hasher.update(b"\x00")
+        hasher.update(companion_contents[rel_p].encode("utf-8"))
+        hasher.update(b"\x00")
+    return hasher.hexdigest()
 
 
 class Severity(StrEnum):
@@ -61,14 +136,6 @@ def classify_origin(path: str) -> SkillOrigin:
     return SkillOrigin.STANDALONE
 
 
-class DuplicateRef(BaseModel):
-    path: str
-    updated_commit: str | None = None
-    updated_date: str | None = None
-    identical: bool = True
-    origin: SkillOrigin | None = None
-
-
 class Finding(BaseModel):
     rule_id: str
     severity: Severity
@@ -76,6 +143,15 @@ class Finding(BaseModel):
     file: str = "SKILL.md"
     line: int | None = None
     suggestion: str | None = None
+
+
+class DuplicateRef(BaseModel):
+    path: str
+    updated_commit: str | None = None
+    updated_date: str | None = None
+    identical: bool = True
+    origin: SkillOrigin | None = None
+    findings: list[Finding] = Field(default_factory=list)
 
 
 class Skill(BaseModel):
@@ -95,6 +171,7 @@ class Skill(BaseModel):
     author: str | None = None
     tags: list[str] = Field(default_factory=list)
     valid: bool = True
+    passing: bool | None = None
     findings: list[Finding] = Field(default_factory=list)
 
     # Runtime analysis helpers (excluded from serialization)
@@ -109,6 +186,7 @@ class Skill(BaseModel):
     repo_root_dir: str | None = Field(default=None, repr=False, exclude=True)
     parse_error: str | None = Field(default=None, repr=False, exclude=True)
     content_hash: str | None = Field(default=None, repr=False, exclude=True)
+    duplicate_skills: list[Any] = Field(default_factory=list, repr=False, exclude=True)
 
     def add_finding(self, finding: Finding) -> None:
         self.findings.append(finding)

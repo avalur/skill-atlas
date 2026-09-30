@@ -86,7 +86,7 @@ my-sample-skill/
 - **Target Ingestion**:
   - The CLI accepts a target `TARGET` which can be:
     - **Local Directory / Repository**: Path to a local folder or cloned Git repository. If the path is inside a Git repository, repository metadata and commit history are evaluated automatically.
-    - **Remote Git Repository**: URL to a remote Git repository (e.g. `https://github.com/owner/repo.git`, `git@github.com:...`). The scanner clones/fetches the repository into a temporary workspace, discovers skills, extracts provenance, and performs scanning.
+    - **Remote Git Repository**: URL to a remote Git repository (e.g. `https://github.com/owner/repo.git`, `git@github.com:...`). The scanner scans the repository via the GitHub REST API and raw file downloads (without cloning), discovers skills, extracts provenance, and performs scanning.
     - **Single Skill Directory**: Path pointing directly to a directory containing `SKILL.md`.
 - **Recursive Skill Discovery**:
   - All subdirectories containing a valid `SKILL.md` are discovered.
@@ -145,7 +145,7 @@ Skills may be placed in varied repository locations with distinct lifecycles:
    - Skills with the same name are grouped together (test-data skills are kept isolated from non-test skills).
    - The copy with the newest `updated_date` is displayed as the primary entry (ties broken by lexicographic path order).
    - Secondary copies are recorded in `duplicates: list[DuplicateRef]` with their paths, update timestamps, and an `identical: bool` flag indicating whether directory contents match.
-   - Rules are executed only against the displayed primary copy to prevent duplicate findings.
+   - Rules are executed against the displayed primary copy, and all secondary duplicate copies are audited as well. Findings on secondary copies are attached to their `DuplicateRef` and propagated to the primary skill so they affect the pass/fail status and exit code.
    - If secondary copies differ in content, rule `DSC-001 Stale Duplicate` is reported with level `WARN`.
    - Symlinks are resolved to their target and counted once.
 
@@ -302,7 +302,7 @@ Status: FAILED (Exit Code 1)
    - Package structure and CLI entrypoint skeleton.
 2. **Phase 2: Data Models, Git Ingestion & Discovery**
    - Pydantic models: `Skill`, `Finding`, `ScanResult` (including `repo_name`, `commit`, `commit_date`, `description`).
-   - Git repository ingestion (local repos and remote Git URLs via shallow/temporary clone).
+   - Git repository ingestion (local repos via git inspection and remote Git URLs via GitHub REST API without cloning).
    - Git commit provenance resolution (identifying commit where skill/`SKILL.md` was added).
    - Recursive skill discovery and `SKILL.md` frontmatter/body parser.
 3. **Phase 3: Rule Engine**

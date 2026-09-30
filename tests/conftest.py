@@ -161,6 +161,12 @@ def create_fake_github_transport(
 
         # 2. Recursive git tree: GET /repos/{owner}/{repo}/git/trees/{branch}?recursive=1
         if "/git/trees/" in url_str:
+            match_tree = re.search(r"/git/trees/([^?]+)", request.url.path)
+            if match_tree:
+                branch_in_url = match_tree.group(1)
+                if branch_in_url not in (default_branch, "master", "main", "HEAD"):
+                    return httpx.Response(404, headers=headers, json={"message": "Not Found"})
+
             tree_items = []
             for path_str, content in files.items():
                 tree_items.append(
@@ -179,6 +185,22 @@ def create_fake_github_transport(
                     "sha": "tree_root_sha",
                     "tree": tree_items,
                     "truncated": simulate_truncated_tree,
+                },
+            )
+
+        # 2b. Rate limit endpoint: GET /rate_limit
+        if "/rate_limit" in url_str:
+            return httpx.Response(
+                200,
+                headers=headers,
+                json={
+                    "resources": {
+                        "core": {
+                            "limit": 5000,
+                            "remaining": 0 if simulate_rate_limit else rate_limit_remaining,
+                            "reset": 1780000000,
+                        }
+                    }
                 },
             )
 

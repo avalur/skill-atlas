@@ -5,6 +5,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from skill_atlas.models import parse_utc_timestamp
+
 GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", **os.environ}
 
 
@@ -137,6 +139,8 @@ def get_file_provenance(repo_root: Path, file_rel_path: str) -> tuple[str | None
             parts = output.split(" ", 1)
             commit_hash = parts[0]
             commit_date = parts[1] if len(parts) > 1 else None
+            if commit_date:
+                commit_date = parse_utc_timestamp(commit_date).strftime("%Y-%m-%dT%H:%M:%SZ")
             return commit_hash, commit_date
 
         return None, None
@@ -169,6 +173,8 @@ def get_directory_last_commit(repo_root: Path, dir_rel_path: str) -> tuple[str |
             parts = output.split(" ", 1)
             commit_hash = parts[0]
             commit_date = parts[1] if len(parts) > 1 else None
+            if commit_date:
+                commit_date = parse_utc_timestamp(commit_date).strftime("%Y-%m-%dT%H:%M:%SZ")
             return commit_hash, commit_date
         return None, None
     except Exception:  # noqa: BLE001

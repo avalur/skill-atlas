@@ -11,21 +11,33 @@ import urllib.parse
 import httpx
 
 from skill_atlas import __version__
+from skill_atlas.models import parse_utc_timestamp
 
 
 class RateLimitError(RuntimeError):
     """Raised when GitHub API rate limit is exhausted."""
 
-    def __init__(self, reset_epoch: int | None = None) -> None:
+    def __init__(self, reset_epoch: int | None = None, token_configured: bool = False) -> None:
+        self.reset_epoch = reset_epoch
+        self.token_configured = token_configured
         if reset_epoch:
             reset_time = datetime.datetime.fromtimestamp(reset_epoch, tz=datetime.UTC).strftime(
                 "%H:%M UTC"
             )
-            msg = f"GitHub rate limit reached, resets at {reset_time}; set GITHUB_TOKEN"
+            if token_configured:
+                msg = (
+                    f"GitHub rate limit reached, resets at {reset_time}; "
+                    "set GITHUB_TOKEN or check quota (configured token exhausted)"
+                )
+            else:
+                msg = f"GitHub rate limit reached, resets at {reset_time}; set GITHUB_TOKEN"
         else:
-            msg = "GitHub rate limit reached; set GITHUB_TOKEN"
+            msg = (
+                "GitHub rate limit reached; set GITHUB_TOKEN or check quota (configured token exhausted)"
+                if token_configured
+                else "GitHub rate limit reached; set GITHUB_TOKEN"
+            )
         super().__init__(msg)
-        self.reset_epoch = reset_epoch
 
 
 class GitHubClient:
@@ -75,7 +87,7 @@ class GitHubClient:
         if resp.status_code == 403 and (
             self.rate_limit_remaining == 0 or "rate limit" in resp.text.lower()
         ):
-            raise RateLimitError(self.rate_limit_reset)
+            raise RateLimitError(self.rate_limit_reset, token_configured=bool(self.token))
 
     def _request(self, client: httpx.Client, url: str) -> httpx.Response:
         """Execute request with automatic fallback to unauthenticated request on 401/403."""
@@ -83,6 +95,11 @@ class GitHubClient:
         self._record_rate_limit(resp)
 
         if resp.status_code in (401, 403) and self.token:
+            if resp.status_code == 401:
+                raise ValueError(
+                    "GitHub authentication failed: configured GITHUB_TOKEN is invalid or revoked"
+                )
+
             sso_hdr = resp.headers.get("x-github-sso", "")
             if "organization saml enforcement" in resp.text.lower() or sso_hdr:
                 sso_match = re.search(r"url=([^\s;]+)", sso_hdr)
@@ -99,6 +116,24 @@ class GitHubClient:
 
         return resp
 
+    def get_rate_limit(self, client: httpx.Client | None = None) -> int | None:
+        """Query current rate limit remaining from GitHub API."""
+        url = f"{self.api_base}/rate_limit"
+        close_client = False
+        c = client
+        if c is None:
+            c = httpx.Client(timeout=10.0)
+            close_client = True
+        try:
+            resp = c.get(url, headers=self._get_headers(with_auth=True))
+            self._record_rate_limit(resp)
+            return self.rate_limit_remaining
+        except Exception:  # noqa: BLE001
+            return self.rate_limit_remaining
+        finally:
+            if close_client:
+                c.close()
+
     def get_default_branch(self, client: httpx.Client, owner: str, repo: str) -> str:
         """Determine default branch of repository (main, master, etc.)."""
         url = f"{self.api_base}/repos/{owner}/{repo}"
@@ -111,13 +146,19 @@ class GitHubClient:
         return "main"
 
     def fetch_all_paths(
-        self, client: httpx.Client, owner: str, repo: str, branch: str
+        self,
+        client: httpx.Client,
+        owner: str,
+        repo: str,
+        branch: str,
+        is_explicit_ref: bool = False,
     ) -> tuple[str, list[dict], bool]:
         """Fetch full recursive tree of repository.
 
         Returns (branch_used, tree_items, is_truncated).
         """
-        for target_branch in (branch, "master", "main"):
+        branches_to_try = (branch,) if is_explicit_ref else (branch, "master", "main")
+        for target_branch in branches_to_try:
             url = f"{self.api_base}/repos/{owner}/{repo}/git/trees/{target_branch}?recursive=1"
             resp = self._request(client, url)
             if resp.status_code == 404:
@@ -127,6 +168,8 @@ class GitHubClient:
                 tree = data.get("tree", [])
                 truncated = bool(data.get("truncated", False))
                 return target_branch, tree, truncated
+        if is_explicit_ref:
+            raise ValueError(f"Git ref '{branch}' not found in GitHub repository '{owner}/{repo}'")
         return branch, [], False
 
     def fetch_file_content(
@@ -229,5 +272,10 @@ class GitHubClient:
             oldest_commit = oldest.get("commit", {})
             oldest_author = oldest_commit.get("author", {}) or oldest_commit.get("committer", {})
             oldest_date = oldest_author.get("date")
+
+        if oldest_date:
+            oldest_date = parse_utc_timestamp(oldest_date).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if newest_date:
+            newest_date = parse_utc_timestamp(newest_date).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         return oldest_sha, oldest_date, newest_sha, newest_date

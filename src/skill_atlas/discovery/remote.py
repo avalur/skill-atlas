@@ -1,6 +1,5 @@
 """Remote Git repository discovery for AI Agent Skills."""
 
-import hashlib
 import threading
 import time
 from pathlib import Path
@@ -10,41 +9,15 @@ import httpx
 from skill_atlas.git.client import parse_github_url
 from skill_atlas.git.github import GitHubClient
 from skill_atlas.models import (
+    BINARY_EXTENSIONS,
     ProgressCallback,
     ProgressEvent,
     Skill,
     Stage,
+    calculate_content_hash,
     classify_origin,
 )
 from skill_atlas.parsers.markdown import parse_skill_markdown
-
-TEXT_EXTENSIONS = {
-    ".sh",
-    ".bash",
-    ".py",
-    ".js",
-    ".ts",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".txt",
-    ".md",
-    ".env",
-    ".cfg",
-    ".ini",
-    ".toml",
-}
-
-
-def _calculate_content_hash(companion_contents: dict[str, str]) -> str:
-    """Calculate a deterministic sha256 hash of all text contents in the skill."""
-    hasher = hashlib.sha256()
-    for rel_p in sorted(companion_contents.keys()):
-        hasher.update(rel_p.encode("utf-8"))
-        hasher.update(b"\x00")
-        hasher.update(companion_contents[rel_p].encode("utf-8"))
-        hasher.update(b"\x00")
-    return hasher.hexdigest()
 
 
 def is_remote_target(target: str) -> bool:
@@ -117,9 +90,14 @@ def _discover_via_github_api(
         emit(Stage.FETCH, f"Fetching tree for {owner}/{repo} (ref: {target_ref})...")
         check_cancel()
 
-        active_branch, tree_items, _is_truncated = gh.fetch_all_paths(
-            client, owner, repo, target_ref
+        active_branch, tree_items, is_truncated = gh.fetch_all_paths(
+            client, owner, repo, target_ref, is_explicit_ref=bool(ref)
         )
+        if is_truncated:
+            emit(
+                Stage.DISCOVER,
+                f"⚠️ Warning: Repository tree for {owner}/{repo} was truncated by GitHub API (>100,000 files). Some nested skills may be omitted.",
+            )
 
         all_paths = [item["path"] for item in tree_items if item.get("type") == "blob"]
         path_to_size = {
@@ -142,6 +120,8 @@ def _discover_via_github_api(
         if not manifest_paths:
             return []
 
+        all_skill_dirs = [(str(Path(p).parent) if "/" in p else ".") for p in manifest_paths]
+
         repo_full_name = f"{owner}/{repo}"
         canonical_repo_url = f"https://github.com/{owner}/{repo}"
 
@@ -162,12 +142,25 @@ def _discover_via_github_api(
                 skill_path=skill_dir,
             )
 
-            # Collect companion files in the skill directory
+            # Collect companion files in the skill directory, excluding child skills (M4)
+            nested_prefixes = tuple(
+                f"{other}/"
+                for other in all_skill_dirs
+                if other != skill_dir and (skill_dir == "." or other.startswith(f"{skill_dir}/"))
+            )
+
             if skill_dir == ".":
-                available_files = list(all_paths)
+                available_files = [
+                    p for p in all_paths if not (nested_prefixes and p.startswith(nested_prefixes))
+                ]
             else:
                 prefix = f"{skill_dir}/"
-                available_files = [p[len(prefix) :] for p in all_paths if p.startswith(prefix)]
+                available_files = [
+                    p[len(prefix) :]
+                    for p in all_paths
+                    if p.startswith(prefix)
+                    and not (nested_prefixes and p.startswith(nested_prefixes))
+                ]
 
             raw_content = gh.fetch_file_content(client, owner, repo, active_branch, manifest_path)
 
@@ -178,7 +171,7 @@ def _discover_via_github_api(
 
             for rel_f in available_files:
                 check_cancel()
-                if rel_f != "SKILL.md" and Path(rel_f).suffix.lower() in TEXT_EXTENSIONS:
+                if rel_f != "SKILL.md" and Path(rel_f).suffix.lower() not in BINARY_EXTENSIONS:
                     full_repo_path = f"{skill_dir}/{rel_f}" if skill_dir != "." else rel_f
                     file_size = path_to_size.get(full_repo_path, 0)
                     if file_size <= 1_048_576:  # 1 MB
@@ -218,7 +211,7 @@ def _discover_via_github_api(
                 }
 
             origin = classify_origin(skill_dir)
-            content_hash = _calculate_content_hash(companion_contents)
+            content_hash = calculate_content_hash(companion_contents)
 
             skill = Skill(
                 name=parse_info["name"],

@@ -274,3 +274,125 @@ def test_copy_layout_koog(tmp_path: Path, cli_runner: CliRunner):
     # With --include-test-data: exit code 1
     res_inc = cli_runner.invoke(app, ["scan", str(repo), "--include-test-data", "--format", "json"])
     assert res_inc.exit_code == 1
+
+
+def test_case_a_vulnerable_stale_copy_is_audited(tmp_path: Path, cli_runner: CliRunner):
+    """C2: An older duplicate copy with security vulnerabilities must be audited and fail the scan."""
+    old_dangerous = (
+        "---\nname: my-tool\ndescription: Older copy with dangerous command.\n---\nrm -rf /\n"
+    )
+    new_clean = "---\nname: my-tool\ndescription: Newer clean copy without dangerous command.\n---\n# Safe\n"
+
+    repo = make_repo(
+        tmp_path / "repo_c2",
+        commits=[
+            CommitDef(
+                message="Add dangerous older copy to .claude",
+                files={".claude/skills/my-tool/SKILL.md": old_dangerous},
+                date="2026-01-01T10:00:00Z",
+            ),
+            CommitDef(
+                message="Add clean newer copy to .agents",
+                files={".agents/skills/my-tool/SKILL.md": new_clean},
+                date="2026-02-01T10:00:00Z",
+            ),
+        ],
+    )
+
+    res = cli_runner.invoke(app, ["scan", str(repo), "--format", "json"])
+    assert res.exit_code == 1
+    data = json.loads(res.stdout)
+    assert data["summary"]["failed"] == 1
+    skill = data["skills"][0]
+    rule_ids = [f["rule_id"] for f in skill["findings"]]
+    assert "SEC-002" in rule_ids
+
+
+def test_case_c_distinct_product_skills_same_name_not_merged(tmp_path: Path, cli_runner: CliRunner):
+    """C3: Two distinct product skills in different plugins sharing a name must NOT be merged."""
+    clean_plugin = "---\nname: setup\ndescription: Setup tool for plugin A.\n---\n# Clean\n"
+    vulnerable_plugin = (
+        "---\nname: setup\ndescription: Setup tool for plugin B.\n---\nAKIAIOSFODNN7EXAMPLE\n"
+    )
+
+    repo = make_repo(
+        tmp_path / "repo_c3",
+        tree={
+            "plugins/plugin-a/resources/skills/setup/SKILL.md": clean_plugin,
+            "plugins/plugin-b/resources/skills/setup/SKILL.md": vulnerable_plugin,
+        },
+    )
+
+    res = cli_runner.invoke(app, ["scan", str(repo), "--format", "json"])
+    assert res.exit_code == 1
+    data = json.loads(res.stdout)
+    # Both skills must be retained
+    assert data["summary"]["total_skills"] == 2
+    names = [s["name"] for s in data["skills"]]
+    assert names == ["setup", "setup"]
+    # Secret in plugin-b must be detected
+    all_rule_ids = [f["rule_id"] for s in data["skills"] for f in s["findings"]]
+    assert "SEC-001" in all_rule_ids
+
+
+def test_case_a_timezone_aware_newest_selection(tmp_path: Path, cli_runner: CliRunner):
+    """C4: Newest copy is selected by comparing timezone-aware UTC timestamps, not ISO strings."""
+    # Copy A: 10:00:00+05:00 == 05:00:00 UTC (older)
+    # Copy B: 08:00:00+00:00 == 08:00:00 UTC (newer)
+    # Lexicographically, '2026-01-01T10:00:00+05:00' > '2026-01-01T08:00:00+00:00',
+    # but Copy B is actually newer in real time!
+    repo = make_repo(
+        tmp_path / "repo_c4",
+        commits=[
+            CommitDef(
+                message="Add Copy A",
+                files={
+                    ".claude/skills/tz-tool/SKILL.md": "---\nname: tz-tool\ndescription: Copy A\n---\n"
+                },
+                date="2026-01-01T10:00:00+05:00",
+            ),
+            CommitDef(
+                message="Add Copy B",
+                files={
+                    ".agents/skills/tz-tool/SKILL.md": "---\nname: tz-tool\ndescription: Copy B\n---\n"
+                },
+                date="2026-01-01T08:00:00+00:00",
+            ),
+        ],
+    )
+
+    res = cli_runner.invoke(app, ["scan", str(repo), "--format", "json"])
+    assert res.exit_code == 0
+    data = json.loads(res.stdout)
+    skill = data["skills"][0]
+    # Copy B (.agents) must be chosen as newest
+    assert skill["path"] == ".agents/skills/tz-tool"
+
+
+def test_nested_skills_isolation_no_double_reporting(tmp_path: Path, cli_runner: CliRunner):
+    """M4: Root skill does not collect child skills' companion files or double-report their findings."""
+    root_skill = "---\nname: root-project\ndescription: Root skill for repository.\n---\n# Root\n"
+    child_skill = "---\nname: child-skill\ndescription: Nested child skill.\n---\nrm -rf /\n"
+
+    repo = make_repo(
+        tmp_path / "repo_m4",
+        tree={
+            "SKILL.md": root_skill,
+            ".claude/skills/child/SKILL.md": child_skill,
+        },
+    )
+
+    res = cli_runner.invoke(app, ["scan", str(repo), "--format", "json"])
+    assert res.exit_code == 1
+    data = json.loads(res.stdout)
+    assert data["summary"]["total_skills"] == 2
+    root_s = next(s for s in data["skills"] if s["name"] == "root-project")
+    child_s = next(s for s in data["skills"] if s["name"] == "child-skill")
+
+    # Root skill must NOT contain SEC-002 from child skill
+    root_rule_ids = [f["rule_id"] for f in root_s["findings"]]
+    assert "SEC-002" not in root_rule_ids
+
+    # Child skill has SEC-002
+    child_rule_ids = [f["rule_id"] for f in child_s["findings"]]
+    assert "SEC-002" in child_rule_ids

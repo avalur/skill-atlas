@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from skill_atlas import __version__
 from skill_atlas.models import ProgressEvent, ScanResult
@@ -147,7 +148,7 @@ def scan_command(
 
         def on_progress(event: ProgressEvent) -> None:
             if format_clean != "json" and sys.stderr.isatty():
-                stderr_console.print(f"[dim]⟳ {event.message}[/dim]", end="\r")
+                stderr_console.print(f"[dim]⟳ {escape(event.message)}[/dim]", end="\r")
 
         scanner = Scanner(
             rules_category=rules_clean,
@@ -210,7 +211,15 @@ def serve_command(
     ] = False,
 ) -> None:
     """Start local web interface for Skill Atlas."""
-    from skill_atlas.web import run_server
+    try:
+        from skill_atlas.web import run_server
+    except ImportError as err:
+        typer.secho(
+            "Error: Web dependencies are not installed. Please install with: pip install 'skill-atlas[web]'",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2) from err
 
     run_server(host=host, port=port, open_browser=open_browser, allow_local=allow_local)
 
