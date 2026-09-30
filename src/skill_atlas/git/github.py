@@ -1,8 +1,11 @@
 """GitHub REST API and raw content client for remote repository scanning."""
 
+import contextlib
 import datetime
 import os
 import re
+import shutil
+import subprocess
 import urllib.parse
 
 import httpx
@@ -30,6 +33,17 @@ class GitHubClient:
 
     def __init__(self, token: str | None = None) -> None:
         self.token = token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if not self.token and shutil.which("gh"):
+            with contextlib.suppress(subprocess.SubprocessError, OSError):
+                res = subprocess.run(
+                    ["gh", "auth", "token"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                if res.returncode == 0 and res.stdout.strip():
+                    self.token = res.stdout.strip()
         self.api_base = "https://api.github.com"
         self.raw_base = "https://raw.githubusercontent.com"
         self.rate_limit_remaining: int | None = None
@@ -69,6 +83,15 @@ class GitHubClient:
         self._record_rate_limit(resp)
 
         if resp.status_code in (401, 403) and self.token:
+            sso_hdr = resp.headers.get("x-github-sso", "")
+            if "organization saml enforcement" in resp.text.lower() or sso_hdr:
+                sso_match = re.search(r"url=([^\s;]+)", sso_hdr)
+                sso_url = sso_match.group(1) if sso_match else None
+                msg = "GitHub organization SAML SSO authorization required for your token."
+                if sso_url:
+                    msg += f"\nPlease authorize your token at: {sso_url}"
+                raise RuntimeError(msg)
+
             # Fall back to unauthenticated request if it wasn't a rate limit issue
             if self.rate_limit_remaining != 0 and "rate limit" not in resp.text.lower():
                 resp = client.get(url, headers=self._get_headers(with_auth=False))
@@ -121,6 +144,15 @@ class GitHubClient:
         if resp.status_code == 200:
             return resp.text
 
+        # If authenticated raw request failed (e.g. 404 due to token/SAML restrictions on public repos),
+        # fall back to unauthenticated raw request
+        if resp.status_code in (401, 403, 404) and self.token:
+            unauth_headers = {"User-Agent": f"SkillAtlas-Scanner/{__version__}"}
+            resp_unauth = client.get(url, headers=unauth_headers)
+            self._record_rate_limit(resp_unauth)
+            if resp_unauth.status_code == 200:
+                return resp_unauth.text
+
         # Fallback to contents API with raw Accept header
         api_url = f"{self.api_base}/repos/{owner}/{repo}/contents/{quoted_path}?ref={branch}"
         api_headers = self._get_headers(with_auth=True)
@@ -129,6 +161,18 @@ class GitHubClient:
         self._record_rate_limit(resp_api)
         if resp_api.status_code == 200:
             return resp_api.text
+
+        if resp_api.status_code in (401, 403) and self.token:
+            resp_api_unauth = client.get(
+                api_url,
+                headers={
+                    "Accept": "application/vnd.github.raw",
+                    "User-Agent": f"SkillAtlas-Scanner/{__version__}",
+                },
+            )
+            self._record_rate_limit(resp_api_unauth)
+            if resp_api_unauth.status_code == 200:
+                return resp_api_unauth.text
 
         return None
 

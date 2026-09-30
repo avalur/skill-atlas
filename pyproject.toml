@@ -54,6 +54,7 @@ ignore = ["E501", "S603", "S607"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+addopts = "-m 'not network'"
 markers = [
     "network: opt-in tests that call the real GitHub API",
     "slow: slow running tests",
