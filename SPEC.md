@@ -183,6 +183,12 @@ skill-atlas serve [OPTIONS]
 - `--port`: Server bind port (default: `8765`).
 - `--open`: Open browser automatically upon startup.
 - `--allow-local`: Allow scanning local filesystem paths via web interface.
+- **Web UI Features**:
+  - Real-time scan progress bar and GitHub rate limit indicator.
+  - Interactive skill catalog with pass/fail badges, findings breakdown, and duplicate origin badges.
+  - Interactive filter chips by origin (`All`, `Agent Config`, `Product`, `Standalone`, `Test Data`).
+  - Search filter input to filter skills in real time by words in names and descriptions.
+  - Export full scan results as JSON.
 
 ### 4.4. Exit Codes:
 - `0`: Success (all checks passed or findings are below `--fail-on` threshold).

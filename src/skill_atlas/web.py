@@ -83,6 +83,8 @@ HTML_CONTENT = """<!DOCTYPE html>
     .filter-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
     .chip { cursor: pointer; padding: 0.3rem 0.75rem; border-radius: 9999px; background: var(--card-bg); border: 1px solid var(--border); font-size: 0.85rem; color: var(--text-muted); }
     .chip.active { background: var(--primary); color: white; border-color: var(--primary); }
+    .filter-row { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.75rem; }
+    .filter-input { flex: 1; padding: 0.55rem 0.8rem; border: 1px solid var(--border); border-radius: 0.375rem; background: var(--bg); color: var(--text); font-size: 0.9rem; }
     .skill-item { border: 1px solid var(--border); border-radius: 0.375rem; margin-bottom: 0.75rem; padding: 1rem; background: var(--card-bg); }
     .skill-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem; }
     .skill-title { font-weight: 600; font-size: 1.05rem; display: flex; align-items: center; gap: 0.5rem; }
@@ -140,11 +142,14 @@ HTML_CONTENT = """<!DOCTYPE html>
         <button class="btn-secondary" onclick="downloadJson()">Download JSON</button>
       </div>
       <div class="filter-chips">
-        <div class="chip active" onclick="setOriginFilter('all')">All (<span id="count-all">0</span>)</div>
-        <div class="chip" onclick="setOriginFilter('agent-config')">Agent Config (<span id="count-agent-config">0</span>)</div>
-        <div class="chip" onclick="setOriginFilter('product')">Product (<span id="count-product">0</span>)</div>
-        <div class="chip" onclick="setOriginFilter('standalone')">Standalone (<span id="count-standalone">0</span>)</div>
-        <div class="chip" onclick="setOriginFilter('test-data')">Test Data (<span id="count-test-data">0</span>)</div>
+        <div class="chip active" onclick="setOriginFilter('all', event)">All (<span id="count-all">0</span>)</div>
+        <div class="chip" onclick="setOriginFilter('agent-config', event)">Agent Config (<span id="count-agent-config">0</span>)</div>
+        <div class="chip" onclick="setOriginFilter('product', event)">Product (<span id="count-product">0</span>)</div>
+        <div class="chip" onclick="setOriginFilter('standalone', event)">Standalone (<span id="count-standalone">0</span>)</div>
+        <div class="chip" onclick="setOriginFilter('test-data', event)">Test Data (<span id="count-test-data">0</span>)</div>
+      </div>
+      <div class="filter-row">
+        <input type="text" id="filter-input" class="filter-input" placeholder="Filter skills by words in name or description..." oninput="renderSkills()">
       </div>
     </div>
 
@@ -196,6 +201,9 @@ HTML_CONTENT = """<!DOCTYPE html>
       document.getElementById('status-spinner').textContent = '⟳';
       document.getElementById('status-text').textContent = 'Starting scan...';
       document.getElementById('skills-list').innerHTML = '';
+      if (document.getElementById('filter-input')) {
+        document.getElementById('filter-input').value = '';
+      }
       document.getElementById('summary-section').style.display = 'none';
       document.getElementById('cancel-btn').style.display = 'inline-block';
 
@@ -293,10 +301,13 @@ HTML_CONTENT = """<!DOCTYPE html>
       document.getElementById('scan-btn').disabled = false;
     }
 
-    function setOriginFilter(origin) {
+    function setOriginFilter(origin, evt) {
       activeFilter = origin;
       document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-      event.target.classList.add('active');
+      const chip = evt ? (evt.currentTarget || evt.target.closest('.chip')) : (window.event ? (window.event.currentTarget || window.event.target.closest('.chip')) : null);
+      if (chip) {
+        chip.classList.add('active');
+      }
       renderSkills();
     }
 
@@ -324,9 +335,31 @@ HTML_CONTENT = """<!DOCTYPE html>
       list.innerHTML = '';
       if (!scanResult) return;
 
-      const filtered = scanResult.skills.filter(sk => activeFilter === 'all' || sk.origin === activeFilter);
+      const filterInput = document.getElementById('filter-input');
+      const filterText = filterInput ? filterInput.value.trim().toLowerCase() : '';
+      const filterWords = filterText ? filterText.split(/\\s+/).filter(Boolean) : [];
+
+      const filtered = scanResult.skills.filter(sk => {
+        if (activeFilter !== 'all' && sk.origin !== activeFilter) {
+          return false;
+        }
+        if (filterWords.length > 0) {
+          const nameLower = (sk.name || '').toLowerCase();
+          const descLower = (sk.description || '').toLowerCase();
+          const combined = `${nameLower} ${descLower}`;
+          const matches = filterWords.every(w => combined.includes(w));
+          if (!matches) {
+            return false;
+          }
+        }
+        return true;
+      });
+
       if (filtered.length === 0) {
-        list.innerHTML = '<div style="text-align:center; padding:2rem; color:var(--text-muted);">No skills in this category.</div>';
+        const msg = filterWords.length > 0
+          ? 'No skills matching the filter.'
+          : (activeFilter !== 'all' ? 'No skills in this category.' : 'No skills found.');
+        list.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--text-muted);">${msg}</div>`;
         return;
       }
 
