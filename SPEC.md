@@ -1,0 +1,277 @@
+# Specification: Skill Atlas CLI (`skill-atlas`) (Iteration 1 / MVP)
+
+**Specification Version**: 0.1.0-draft  
+**Status**: In Review / Collaborative Discussion  
+**Target Release**: v0.1.0 (CLI MVP for workshop)
+
+---
+
+## 1. Introduction and Goals
+
+`Skill Atlas` (`skill-atlas`) is a static analysis and validation tool for AI Agent Skills.
+
+With the growth of agent environments (Junie, Claude Code, OpenAI Codex, Cursor, etc.), skills are structured as standardized directories containing a `SKILL.md` manifest, instructions, and executable scripts.
+
+### Key Goals for Iteration 1:
+1. Build a lightweight, fast, and standalone CLI scanner.
+2. Ingest and scan both local directories and Git repositories (local repos and remote Git URLs).
+3. Track skill provenance: automatically resolve and record the repository name, skill name, description, and the initial commit where the skill was introduced.
+4. Validate skill structure and metadata (adherence to `SKILL.md` conventions).
+5. Perform initial static security auditing (Level 1: secrets, destructive commands, basic prompt injection).
+6. Provide informative terminal output for human users and strict JSON for CI/CD, skill cataloging, and agent workflows.
+
+---
+
+## 2. Agent Skill Model & Provenance Metadata
+
+In Skill Atlas, a skill is defined as a directory containing a `SKILL.md` file (at the top level or nested within a repository layout), enriched with provenance metadata from its hosting Git repository.
+
+### Skill Entity Attributes:
+- **`name`** (`str`): Skill identifier from `SKILL.md` frontmatter (or directory name fallback).
+- **`description`** (`str`): Summary of what the skill does (extracted from YAML frontmatter).
+- **`repo_name`** (`str | None`): Name of the repository (e.g. `owner/repo` or directory name for local repos).
+- **`repo_url`** (`str | None`): Remote origin URL of the repository (if available).
+- **`commit`** (`str | None`): Git commit hash (SHA) when this skill was first introduced into the repository.
+- **`commit_date`** (`str | None`): Author date/timestamp (ISO 8601) of the introductory commit.
+- **`path`** (`str`): Path to the skill directory relative to the repository or scan root.
+- **`version`** (`str | None`): Skill version from frontmatter.
+- **`author`** (`str | None`): Author information if specified.
+- **`tags`** (`list[str]`): Tags/categories from frontmatter.
+- **`findings`** (`list[Finding]`): Structural and security findings detected during scan.
+
+### `SKILL.md` Format:
+The file consists of **YAML frontmatter** and a **Markdown body**:
+
+```markdown
+---
+name: my-sample-skill
+version: 1.0.0
+description: A concise and clear description of what this skill does
+author: Developer Name
+tags:
+  - git
+  - automation
+permissions:
+  - filesystem:read
+---
+
+# My Sample Skill
+
+Instructions for the agent on when and how to invoke this skill.
+References to auxiliary scripts: [run.sh](scripts/run.sh).
+```
+
+### Skill Directory Structure:
+```text
+my-sample-skill/
+├── SKILL.md            # Primary manifest and skill prompt (required)
+├── scripts/            # Executable scripts (bash, python, etc.)
+│   └── run.sh
+└── reference/          # Supplementary documentation and schemas
+    └── schema.json
+```
+
+---
+
+## 3. Functional CLI Requirements
+
+### 3.1. Discovery and Git Repository Ingestion
+- **Target Ingestion**:
+  - The CLI accepts a target `TARGET` which can be:
+    - **Local Directory / Repository**: Path to a local folder or cloned Git repository. If the path is inside a Git repository, repository metadata and commit history are evaluated automatically.
+    - **Remote Git Repository**: URL to a remote Git repository (e.g. `https://github.com/owner/repo.git`, `git@github.com:...`). The scanner clones/fetches the repository into a temporary workspace, discovers skills, extracts provenance, and performs scanning.
+    - **Single Skill Directory**: Path pointing directly to a directory containing `SKILL.md`.
+- **Recursive Skill Discovery**:
+  - All subdirectories containing a valid `SKILL.md` are discovered.
+  - Standard utility and cache directories are ignored automatically: `.git`, `.venv`, `node_modules`, `__pycache__`, `.pytest_cache`, `.junie`.
+- **Git Provenance Tracking**:
+  - When skills are scanned inside a Git repository (local or remote), Skill Atlas extracts and retains:
+    - **`repo_name`**: Extracted from remote origin URL (e.g. `owner/repo`), or repository directory name if offline.
+    - **`repo_url`**: Canonical URL to the Git repository.
+    - **`commit`**: The exact Git commit hash (SHA) when the skill (specifically `SKILL.md`) was first introduced to the repository (via `git log --diff-filter=A --follow --format="%H" -- <path>/SKILL.md`).
+    - **`commit_date`**: The author timestamp of the introductory commit.
+
+### 3.2. Built-in Rules for Iteration 1
+
+Each rule is assigned a persistent identifier and a severity level:
+- `ERROR` — Critical issue (blocks successful scan).
+- `WARN` — Warning (potential issue or violation of best practices).
+- `INFO` — Informational recommendation.
+
+#### Group 1: Structure and Metadata (Schema Rules — `SCH`)
+| Code | Level | Name | Description |
+|---|---|---|---|
+| `SCH-001` | ERROR | Missing Manifest | The `SKILL.md` file is missing in the discovered skill directory |
+| `SCH-002` | ERROR | Invalid Frontmatter | YAML frontmatter is corrupted or cannot be parsed |
+| `SCH-003` | ERROR | Missing Required Field | Missing required frontmatter field (`name` or `description`) |
+| `SCH-004` | WARN  | Invalid Name Format | Skill name contains invalid characters (recommended: `^[a-z0-9_-]+$`) |
+| `SCH-005` | WARN  | Short Description | `description` length is under 20 characters (insufficient for agent routing) |
+| `SCH-006` | ERROR | Broken Link Reference | `SKILL.md` references local files or scripts that do not exist on disk |
+
+#### Group 2: Security Audit (Security Rules — `SEC`)
+| Code | Level | Name | Description |
+|---|---|---|---|
+| `SEC-001` | ERROR | Hardcoded Secret Detected | Detected exposed secrets (OpenAI `sk-...`, AWS `AKIA...`, GitHub `ghp_...`, private keys) |
+| `SEC-002` | ERROR | Dangerous Shell Command | Usage of destructive commands (`rm -rf /`, `mkfs`, `:(){ :\|:& };:`) |
+| `SEC-003` | WARN  | Unsafe Network Execution | Remote script execution without verification (`curl ... \| bash`, `wget ... \| sh`) |
+| `SEC-004` | WARN  | Sensitive Path Access | Accessing sensitive file paths (`~/.ssh`, `~/.aws`, `/etc/shadow`) |
+| `SEC-005` | WARN  | Prompt Injection Risk | Prompt override / safety bypass patterns (`ignore previous instructions`, `bypass safety`) |
+
+---
+
+## 4. Command-Line Interface (CLI Specification)
+
+### 4.1. Scan Command:
+```bash
+skill-atlas scan [TARGET] [OPTIONS]
+```
+- `TARGET`: Path to a skill directory, a local Git repository, or a remote Git repository URL (e.g., `https://github.com/org/repo.git`). Default: `.` (current directory).
+
+### 4.2. Options:
+- `--format, -f [text|json]`: Output report format (default: `text`).
+- `--fail-on [error|warn]`: Minimum severity level triggering a non-zero exit code (default: `error`).
+- `--rules, -r [all|schema|security]`: Filter rule categories (default: `all`).
+- `--ignore <RULE_ID>`: Ignore specific rules (repeatable option).
+- `--verbose, -v`: Verbose output (including passed checks).
+- `--version`: Display application version.
+
+### 4.3. Exit Codes:
+- `0`: Success (all checks passed or findings are below `--fail-on` threshold).
+- `1`: Violations found at or above `--fail-on` threshold (default: `ERROR`).
+- `2`: Fatal CLI error (invalid options, non-existent target path, argument parsing failure).
+
+---
+
+## 5. Output Data Formats
+
+### 5.1. Terminal Text Output (`--format text`):
+Informative rich table (`rich.table`):
+```text
+🔍 Scanning skills in: https://github.com/example/skills-repo.git (repo: example/skills-repo)
+Found 2 skills...
+
+[FAIL] my-broken-skill
+  Repo:        example/skills-repo
+  Commit:      a1b2c3d4e5f67890123456789abcdef012345678 (2024-03-15T14:30:00Z)
+  Description: Demonstrates broken frontmatter and unsafe shell script execution
+  Path:        skills/my-broken-skill
+  ❌ [ERROR] SCH-003: Missing required field 'description' in SKILL.md:4
+  ⚠️  [WARN]  SEC-003: Unsafe pipe to shell found in scripts/install.sh:12 ('curl | bash')
+
+[PASS] git-helper
+  Repo:        example/skills-repo
+  Commit:      8f9e0d1c2b3a4567890abcdef1234567890abcde (2024-01-10T09:15:00Z)
+  Description: Git automation workflows for agent pipelines
+  Path:        skills/git-helper
+  ✅ All checks passed
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Summary:
+  Scanned Skills: 2
+  Passed: 1
+  Failed: 1
+  Total Findings: 2 (1 Error, 1 Warning, 0 Info)
+Status: FAILED (Exit Code 1)
+```
+
+### 5.2. JSON Output (`--format json`):
+```json
+{
+  "version": "0.1.0",
+  "target": "https://github.com/example/skills-repo.git",
+  "summary": {
+    "total_skills": 2,
+    "passed": 1,
+    "failed": 1,
+    "findings_count": {
+      "error": 1,
+      "warn": 1,
+      "info": 0
+    }
+  },
+  "skills": [
+    {
+      "name": "my-broken-skill",
+      "description": "Demonstrates broken frontmatter and unsafe shell script execution",
+      "repo_name": "example/skills-repo",
+      "repo_url": "https://github.com/example/skills-repo.git",
+      "commit": "a1b2c3d4e5f67890123456789abcdef012345678",
+      "commit_date": "2024-03-15T14:30:00Z",
+      "path": "skills/my-broken-skill",
+      "valid": false,
+      "findings": [
+        {
+          "rule_id": "SCH-003",
+          "severity": "ERROR",
+          "message": "Missing required field 'description'",
+          "file": "SKILL.md",
+          "line": 4,
+          "suggestion": "Add a descriptive 'description' field to YAML frontmatter"
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## 6. Architecture & Module Structure
+
+```text
+               ┌─────────────────────────┐
+               │         CLI             │ (Typer + Rich)
+               └────────────┬────────────┘
+                            │
+               ┌────────────▼────────────┐
+               │    Scanner Engine       │ (Scan Orchestrator)
+               └──────┬───────────┬──────┘
+                      │           │
+     ┌────────────────▼────┐     ┌▼────────────────────┐
+     │  Git & Discovery    │     │    Rule Registry    │
+     │  - Git Ingest/Clone │     │  - Schema Rules     │
+     │  - Provenance Log   │     │  - Security Rules   │
+     │  - Find SKILL.md    │     └─────────┬───────────┘
+     │  - Frontmatter      │               │
+     └─────────────────────┘               │
+                      │                    │
+                      └───────────┬────────┘
+                                  │
+                       ┌──────────▼──────────┐
+                       │  Reporters Engine   │
+                       │  - ConsoleReporter  │
+                       │  - JsonReporter     │
+                       └─────────────────────┘
+```
+
+---
+
+## 7. Development Roadmap (Iteration 1)
+
+1. **Phase 1: Project Setup & Infrastructure**
+   - Configure `pyproject.toml` (uv, typer, pydantic, rich, pytest, ruff).
+   - Package structure and CLI entrypoint skeleton.
+2. **Phase 2: Data Models, Git Ingestion & Discovery**
+   - Pydantic models: `Skill`, `Finding`, `ScanResult` (including `repo_name`, `commit`, `commit_date`, `description`).
+   - Git repository ingestion (local repos and remote Git URLs via shallow/temporary clone).
+   - Git commit provenance resolution (identifying commit where skill/`SKILL.md` was added).
+   - Recursive skill discovery and `SKILL.md` frontmatter/body parser.
+3. **Phase 3: Rule Engine**
+   - Base `Rule` class.
+   - Implement schema rules `SCH-001` through `SCH-006`.
+   - Implement security rules `SEC-001` through `SEC-005`.
+4. **Phase 4: Reporters & CLI Integration**
+   - Console reporting via Rich (displaying repo name, skill name, description, commit).
+   - JSON serialization.
+   - Exit code handling.
+5. **Phase 5: Testing & Documentation**
+   - Unit tests for individual rules and Git provenance resolution.
+   - Integration test with fixture repositories and directories.
+
+---
+
+## 8. Discussion Points
+
+1. **Skill Formats**: Is supporting `SKILL.md` (frontmatter + markdown) sufficient for Iteration 1, or might standalone `skill.yaml` / `skill.json` files be needed during the workshop?
+2. **Security Rule Severity**: Should `SEC-005` (prompt injection heuristic) default to `WARN` or `ERROR`?
+3. **Package Manager & Toolchain**: Confirmed (`uv` and Python 3.11+ approved as standard toolchain).
