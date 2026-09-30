@@ -15,6 +15,8 @@ def test_browser_video_tester_skill_passes_validation() -> None:
     assert (skill_dir / "SKILL.md").exists()
     assert (skill_dir / "scripts" / "browser_tester.py").exists()
     assert (skill_dir / "scripts" / "run_web_audit.py").exists()
+    assert (skill_dir / "scripts" / "generate_music.py").exists()
+    assert (skill_dir / "scripts" / "record_demo.py").exists()
 
     scanner = Scanner()
     result = scanner.scan(skill_dir)
@@ -72,3 +74,17 @@ def test_browser_tester_module_import_and_report_writing(tmp_path: Path) -> None
     assert "| 1 | 1.2s | Initial page load |" in content
     assert "| 2 | 3.4s | Toggle dark theme |" in content
     assert "- **Console JavaScript Errors**: 0" in content
+
+
+def test_upbeat_music_generation_produces_valid_wav(tmp_path: Path) -> None:
+    """The music synthesizer must generate valid 16-bit 44.1kHz stereo WAV."""
+    script_path = Path(".claude/skills/browser-video-tester/scripts/generate_music.py")
+    spec = importlib.util.spec_from_file_location("generate_music", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    out_wav = tmp_path / "test_music.wav"
+    res = module.generate_music_track(out_wav, duration_sec=1.5)
+    assert res.exists()
+    assert res.stat().st_size > 1000
