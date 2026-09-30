@@ -67,6 +67,8 @@ skill-atlas/
 - Scan directory or repo: `uv run skill-atlas scan ./skills` or `uv run skill-atlas scan https://github.com/org/repo.git`
 - Start local web UI: `uv run skill-atlas serve`
 - Run tests: `uv run pytest -v`
+- Run visual regression tests: `uv run pytest tests/visual`
+- Update golden visual baselines: `UPDATE_BASELINES=1 uv run pytest tests/visual`
 - Run opt-in real GitHub API tests: `uv run pytest -m network`
 - Run linter: `uv run ruff check .`
 - Run formatter check: `uv run ruff format --check .`
@@ -105,3 +107,4 @@ Integration tests for every case in the spec (every rule, every CLI option, ever
 6. **Output Format Support**: Always maintain structured JSON export capabilities alongside rich terminal output for CI/CD pipelines and agent workflows.
 7. **Pull Request Workflow**: All new changes, fixes, and features must be submitted via Pull Requests from a dedicated feature branch adhering to `.github/pull_request_template.md`. Direct pushes to `main` are strictly prohibited. Feature PRs must always include a demo video / recording demonstrating the new capabilities.
 8. **Shared Memory Maintenance**: Always read `memory/` before starting a task to understand project context and history. Always update `memory/` using the `shared-memory` skill whenever new patterns or decisions emerge.
+9. **Visual Regression & Baseline Maintenance**: When modifying the Web UI (`src/skill_atlas/web.py`) or CSS, run visual tests (`uv run pytest tests/visual`). If visual changes are intentional, update golden baselines using `UPDATE_BASELINES=1 uv run pytest tests/visual` and commit the updated baseline images (`tests/visual/baselines/*.png`) alongside code in the PR branch.

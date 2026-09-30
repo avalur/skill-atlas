@@ -63,3 +63,27 @@ A task is considered complete only when:
 - `sbx-claude.sh <name>` and `sbx-junie.sh <name>` scripts provision isolated git worktrees at `../<name>` with centralized model proxy credentials.
 - Worktrees like `filter` and `similar` allow concurrent agent development without working directory conflicts.
 - Always check `git worktree list` when inspecting repository state across sessions.
+
+## 5. Visual Regression Testing & Baseline Updates
+Visual regression testing protects the Skill Atlas Web UI against CSS breakages, alignment regressions, and unintended visual distortions:
+- **Test Suite**: Automated deterministic Playwright walkthrough (`tests/visual/test_walkthrough_screens.py`) capturing 5 key moments:
+  1. `01_initial_dashboard` (clean landing state in dark theme)
+  2. `02_light_theme` (toggled light mode styling across all controls)
+  3. `03_scan_completed_results` (summary cards, skill list, origin badges, findings)
+  4. `04_filtered_results` (keyword search filter 'memory' and origin chip active)
+  5. `05_similar_skills_panel` (similarity drawer open with match breakdowns and threshold)
+- **Local Run**:
+  ```bash
+  uv run pytest tests/visual
+  ```
+- **Updating Golden Baselines for Visual Features**:
+  When developing intentional UI changes or new visual features, update baselines locally before pushing:
+  ```bash
+  UPDATE_BASELINES=1 uv run pytest tests/visual
+  # or: uv run pytest tests/visual --update-baselines
+  ```
+  Commit the updated PNG files in `tests/visual/baselines/` in your PR branch. CI compares against the committed baselines and turns green.
+- **Intentional Breakage Test**:
+  `tests/visual/test_break_page.py` injects style distortions and verifies that regressions are caught, side-by-side diff highlight images are generated (`artifacts/visual/diffs/breakage_diff.png`), and diagnostic instructions are provided.
+- **CI Pipeline**:
+  Dedicated `visual-tests` job in `.github/workflows/ci.yml` runs on `ubuntu-latest`, caches Chromium (`~/.cache/ms-playwright`), and exports artifacts (`visual-artifacts-${{ github.sha }}`) containing captured screens, walkthrough video (`video_walkthrough.webm`), diffs, and interactive HTML summary report (`report.html`).
