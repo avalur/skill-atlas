@@ -23,7 +23,13 @@ class ConsoleReporter:
     def __init__(self, console: Console | None = None) -> None:
         self.console = console or Console()
 
-    def render(self, result: ScanResult, fail_on: str = "error", verbose: bool = False) -> None:
+    def render(
+        self,
+        result: ScanResult,
+        fail_on: str = "error",
+        include_test_data: bool = False,
+        verbose: bool = False,
+    ) -> None:
         target_display = _sanitize(result.target)
         repo_extra = ""
         # Check if first skill has repo_name
@@ -34,12 +40,23 @@ class ConsoleReporter:
         self.console.print(f"Found {result.summary.total_skills} skills...\n")
 
         for skill in result.skills:
-            # Determine status based on findings and fail_on threshold
-            is_pass = skill.is_passing(fail_on)
+            # Determine status based on findings, fail_on threshold, and origin
+            is_pass = skill.is_passing(fail_on, include_test_data=include_test_data)
             status_text = (
                 "[bold green][PASS][/bold green]" if is_pass else "[bold red][FAIL][/bold red]"
             )
-            self.console.print(f"{status_text} [bold]{_sanitize(skill.name)}[/bold]")
+            origin_badge = f" [cyan]({skill.origin.value})[/cyan]"
+            self.console.print(f"{status_text} [bold]{_sanitize(skill.name)}[/bold]{origin_badge}")
+
+            if skill.duplicates:
+                total_copies = len(skill.duplicates) + 1
+                self.console.print(f"  [magenta]⧉ duplicated ({total_copies} copies)[/magenta]")
+                for dup in skill.duplicates:
+                    date_info = f" ({_sanitize(dup.updated_date)})" if dup.updated_date else ""
+                    diff_info = "identical" if dup.identical else "differs"
+                    self.console.print(
+                        f"    [dim]also at:[/dim] {_sanitize(dup.path)}{date_info} [dim][{diff_info}][/dim]"
+                    )
 
             if skill.repo_name:
                 self.console.print(f"  [dim]Repo:[/dim]        {_sanitize(skill.repo_name)}")
@@ -49,6 +66,11 @@ class ConsoleReporter:
                 self.console.print(
                     f"  [dim]Commit:[/dim]      {_sanitize(skill.commit)}{date_part}"
                 )
+
+            if skill.updated_date:
+                updated_part = f" ({_sanitize(skill.updated_date)})" if skill.updated_date else ""
+                commit_part = f"{_sanitize(skill.updated_commit)}" if skill.updated_commit else ""
+                self.console.print(f"  [dim]Updated:[/dim]     {commit_part}{updated_part}")
 
             if skill.description:
                 self.console.print(f"  [dim]Description:[/dim] {_sanitize(skill.description)}")
@@ -89,6 +111,13 @@ class ConsoleReporter:
         self.console.print(f"  Scanned Skills: {result.summary.total_skills}")
         self.console.print(f"  Passed: {result.summary.passed}")
         self.console.print(f"  Failed: {result.summary.failed}")
+        by_origin = result.summary.by_origin
+        self.console.print(
+            f"  Origins: Agent config: {by_origin.get('agent-config', 0)}, "
+            f"Product: {by_origin.get('product', 0)}, "
+            f"Standalone: {by_origin.get('standalone', 0)}, "
+            f"Test data: {by_origin.get('test-data', 0)}"
+        )
         counts = result.summary.findings_count
         self.console.print(
             f"  Total Findings: {sum(counts.values())} "
@@ -96,7 +125,7 @@ class ConsoleReporter:
         )
 
         # Status & Exit code indication computed consistently
-        has_blocking = result.has_failures(fail_on)
+        has_blocking = result.has_failures(fail_on, include_test_data=include_test_data)
         if has_blocking:
             self.console.print("[bold red]Status: FAILED (Exit Code 1)[/bold red]")
         else:

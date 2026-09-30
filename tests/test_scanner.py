@@ -205,7 +205,14 @@ def test_cli_scan_valid_target():
 
 
 def test_cli_scan_failure_and_exit_code():
-    res = runner.invoke(app, ["scan", str(FIXTURES_DIR / "vulnerable_skills" / "security_secrets")])
+    res = runner.invoke(
+        app,
+        [
+            "scan",
+            str(FIXTURES_DIR / "vulnerable_skills" / "security_secrets"),
+            "--include-test-data",
+        ],
+    )
     assert res.exit_code == 1
     assert "SEC-001" in res.stdout
     assert "Status: FAILED" in res.stdout
@@ -222,7 +229,7 @@ def test_cli_json_format():
     res = runner.invoke(app, ["scan", target, "--format", "json"])
     assert res.exit_code == 0
     data = json.loads(res.stdout)
-    assert data["version"] == "0.1.0"
+    assert data["version"] == "0.2.0"
     assert data["summary"]["total_skills"] == 1
     assert data["skills"][0]["name"] == "sample-valid-skill"
 
@@ -362,7 +369,7 @@ def test_cli_fail_on_warn():
     assert "Status: SUCCESS" in res_default.stdout
 
     # With --fail-on warn: warnings cause failure
-    res_warn = runner.invoke(app, ["scan", target, "--fail-on", "warn"])
+    res_warn = runner.invoke(app, ["scan", target, "--fail-on", "warn", "--include-test-data"])
     assert res_warn.exit_code == 1
     assert "Status: FAILED" in res_warn.stdout
     assert "[FAIL]" in res_warn.stdout

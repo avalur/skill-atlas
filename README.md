@@ -16,24 +16,46 @@ As the number of skills grows, key challenges emerge:
 
 ---
 
-## 🚀 Planned Features (MVP / Iteration 1)
+## 🚀 Features (v0.2.0)
 
 - **Git Repositories & Discovery**:
   - Scanning local directories and local Git repositories.
-  - Remote Git repository ingestion (cloning remote URLs e.g. `https://github.com/...`).
-  - Automatic skill discovery (locating `SKILL.md` manifests).
-- **Provenance & Cataloging**:
-  - Automatically captures the hosting repository name, skill name, and description.
-  - Extracts the exact Git commit SHA and date when each skill was first introduced into the repository.
-- **Specification & Schema**: Validation of frontmatter structure (`name`, `description`, `version`, resource references).
-- **Security Audit (Level 1)**:
-  - Detection of hardcoded secrets and API tokens (regex patterns).
-  - Detection of dangerous shell patterns in companion scripts.
-  - Basic checks for prompt injection and system prompt override patterns.
-- **Reporting**:
-  - Clear terminal summary with colored output (via `rich`) showing repository, skill name, description, commit, and audit status.
-  - Structured `json` export for automated CI/CD pipelines, cataloging, and agent integrations.
-- **Exit Codes**: Clean CI/CD integration (exit code `0` for clean, `1` for violations).
+  - Remote Git repository ingestion directly via GitHub REST API (zero disk waste, no cloning).
+  - Pinned branch/tag/commit reference support (`--ref`).
+- **Layout Intelligence & Provenance**:
+  - **Origin Classification**: Automatically labels skills by category (`agent-config`, `product`, `test-data`, `standalone`).
+  - **Deduplication & Stale Copy Detection (`DSC-001`)**: Groups duplicate copies across `.claude`, `.agents`, etc., displays the newest copy, and alerts if copies have drifted.
+  - **Test Data Isolation**: Classifies test fixtures and excludes their findings from blocking exit codes unless `--include-test-data` is specified.
+  - **Git Provenance**: Automatically resolves the introductory commit and the latest update commit and timestamp for each skill.
+- **Specification & Security Audit**:
+  - Schema consistency (`SCH-001` through `SCH-006`).
+  - Static security auditing for exposed secrets, destructive commands, unsafe pipes, sensitive paths, and prompt injection (`SEC-001` through `SEC-005`).
+- **Interactive Local Web Interface**:
+  - Launch an interactive local catalog with `skill-atlas serve`.
+  - Pinned real-time status bar reporting exact operations, progress, and rate limit budget.
+  - Filter chips by origin, collapsible findings, and instant JSON download.
+- **Reporting & CI/CD**:
+  - Formatted terminal output via Rich.
+  - Machine-readable structured JSON export.
+  - Deterministic exit codes (`0`, `1`, `2`).
+
+---
+
+## ⚡ Quickstart
+
+```bash
+# Install dependencies
+uv sync
+
+# Scan local directory or repository
+uv run skill-atlas scan ./skills
+
+# Scan remote GitHub repository without cloning
+uv run skill-atlas scan https://github.com/JetBrains/kotlin
+
+# Launch local interactive Web UI
+uv run skill-atlas serve
+```
 
 ---
 

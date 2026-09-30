@@ -1,8 +1,8 @@
-# Specification: Skill Atlas CLI (`skill-atlas`) (Iteration 1 / MVP)
+# Specification: Skill Atlas (`skill-atlas`) (Iteration 2: Tests, CI, Corner Cases & Web Interface)
 
-**Specification Version**: 0.1.0-draft  
-**Status**: In Review / Collaborative Discussion  
-**Target Release**: v0.1.0 (CLI MVP for workshop)
+**Specification Version**: 0.2.0  
+**Status**: In Progress / Active Implementation  
+**Target Release**: v0.2.0
 
 ---
 
@@ -12,13 +12,15 @@
 
 With the growth of agent environments (Junie, Claude Code, OpenAI Codex, Cursor, etc.), skills are structured as standardized directories containing a `SKILL.md` manifest, instructions, and executable scripts.
 
-### Key Goals for Iteration 1:
-1. Build a lightweight, fast, and standalone CLI scanner.
-2. Ingest and scan both local directories and Git repositories (local repos and remote Git URLs).
-3. Track skill provenance: automatically resolve and record the repository name, skill name, description, and the initial commit where the skill was introduced.
-4. Validate skill structure and metadata (adherence to `SKILL.md` conventions).
-5. Perform initial static security auditing (Level 1: secrets, destructive commands, basic prompt injection).
-6. Provide informative terminal output for human users and strict JSON for CI/CD, skill cataloging, and agent workflows.
+### Key Goals for Iteration 2:
+1. Complete CI harness (Ubuntu + macOS, Python 3.11/3.13) with deterministic integration tests.
+2. Robust GitHub REST API remote ingestion (no `git clone`, handling pagination, rate limits, raw files, pinned refs).
+3. Handling real-world repository layouts and corner cases:
+   - Duplicates in `.claude`, `.agents`, etc.: display newest updated copy and detect stale copies (`DSC-001`).
+   - Test data: classify test fixtures and avoid blocking exit codes unless `--include-test-data` is specified.
+   - Product skills: distinguish skills bundled as product resources from agent configurations.
+4. Core progress event streaming (`Stage`, `ProgressEvent`) providing real-time status updates.
+5. Lightweight local web interface (`skill-atlas serve`) with real-time status bar and interactive catalog.
 
 ---
 
@@ -33,6 +35,11 @@ In Skill Atlas, a skill is defined as a directory containing a `SKILL.md` file (
 - **`repo_url`** (`str | None`): Remote origin URL of the repository (if available).
 - **`commit`** (`str | None`): Git commit hash (SHA) when this skill was first introduced into the repository.
 - **`commit_date`** (`str | None`): Author date/timestamp (ISO 8601) of the introductory commit.
+- **`updated_commit`** (`str | None`): Git commit hash (SHA) when the skill directory was last updated.
+- **`updated_date`** (`str | None`): Author date/timestamp (ISO 8601) of the latest update.
+- **`updated_source`** (`str`): Source of update metadata (`"git"` or `"mtime"`).
+- **`origin`** (`str`): Origin classification (`agent-config`, `product`, `test-data`, `standalone`).
+- **`duplicates`** (`list[DuplicateRef]`): References to other copies of this skill found in the repository.
 - **`path`** (`str`): Path to the skill directory relative to the repository or scan root.
 - **`version`** (`str | None`): Skill version from frontmatter.
 - **`author`** (`str | None`): Author information if specified.
@@ -117,6 +124,37 @@ Each rule is assigned a persistent identifier and a severity level:
 | `SEC-004` | WARN  | Sensitive Path Access | Accessing sensitive file paths (`~/.ssh`, `~/.aws`, `/etc/shadow`) |
 | `SEC-005` | WARN  | Prompt Injection Risk | Prompt override / safety bypass patterns (`ignore previous instructions`, `bypass safety`) |
 
+#### Group 3: Discovery and Duplicates (Discovery Rules — `DSC`)
+| Code | Level | Name | Description |
+|---|---|---|---|
+| `DSC-001` | WARN  | Stale Duplicate | Duplicate copies of the skill differ; showing the newest copy while older copy is stale |
+
+---
+
+### 3.3. Repository Layouts & Corner Cases
+
+Skills may be placed in varied repository locations with distinct lifecycles:
+
+1. **Origin Classification**:
+   - `test-data`: Skills placed in test paths (`tests/`, `test/`, `fixtures/`, `testData/`, `test-resources/`, `src/test/`, `src/*Test/`). Used for test fixtures. Findings are non-blocking by default unless `--include-test-data` is specified.
+   - `agent-config`: Skills configured for AI agent tools (`.claude/skills`, `.agents/skills`, `.junie/skills`, `.cursor/`, `.codex/`, `.github/skills`).
+   - `product`: Skills shipped as product resources (`src/main/resources`, `resources/`, `plugins/*/`, `languages/*/`).
+   - `standalone`: All other locations (e.g., dedicated `skills/` catalog).
+
+2. **Duplicates Handling (Case A)**:
+   - Skills with the same name are grouped together (test-data skills are kept isolated from non-test skills).
+   - The copy with the newest `updated_date` is displayed as the primary entry (ties broken by lexicographic path order).
+   - Secondary copies are recorded in `duplicates: list[DuplicateRef]` with their paths, update timestamps, and an `identical: bool` flag indicating whether directory contents match.
+   - Rules are executed only against the displayed primary copy to prevent duplicate findings.
+   - If secondary copies differ in content, rule `DSC-001 Stale Duplicate` is reported with level `WARN`.
+   - Symlinks are resolved to their target and counted once.
+
+3. **Test Data Handling (Case B)**:
+   - Skills classified as `test-data` are included in reporting but do not trigger a non-zero exit code unless `--include-test-data` is passed.
+
+4. **Product Skills (Case C)**:
+   - Shipped inside products or IDE plugins. All rules apply. Reported with `origin: product`.
+
 ---
 
 ## 4. Command-Line Interface (CLI Specification)
@@ -127,18 +165,29 @@ skill-atlas scan [TARGET] [OPTIONS]
 ```
 - `TARGET`: Path to a skill directory, a local Git repository, or a remote Git repository URL (e.g., `https://github.com/org/repo.git`). Default: `.` (current directory).
 
-### 4.2. Options:
+### 4.2. Scan Options:
 - `--format, -f [text|json]`: Output report format (default: `text`).
 - `--fail-on [error|warn]`: Minimum severity level triggering a non-zero exit code (default: `error`).
-- `--rules, -r [all|schema|security]`: Filter rule categories (default: `all`).
+- `--rules, -r [all|schema|security|discovery]`: Filter rule categories (default: `all`).
 - `--ignore <RULE_ID>`: Ignore specific rules (repeatable option).
+- `--ref <branch|tag|sha>`: Pinned Git reference for remote scans (default: remote default branch).
+- `--include-test-data`: Treat test fixture skills as blocking for exit codes.
 - `--verbose, -v`: Verbose output (including passed checks).
 - `--version`: Display application version.
 
-### 4.3. Exit Codes:
+### 4.3. Serve Command (Web UI):
+```bash
+skill-atlas serve [OPTIONS]
+```
+- `--host`: Server bind host (default: `127.0.0.1`).
+- `--port`: Server bind port (default: `8765`).
+- `--open`: Open browser automatically upon startup.
+- `--allow-local`: Allow scanning local filesystem paths via web interface.
+
+### 4.4. Exit Codes:
 - `0`: Success (all checks passed or findings are below `--fail-on` threshold).
 - `1`: Violations found at or above `--fail-on` threshold (default: `ERROR`).
-- `2`: Fatal CLI error (invalid options, non-existent target path, argument parsing failure).
+- `2`: Fatal CLI error (invalid options, non-existent target path, argument parsing failure, rate limit exhausted).
 
 ---
 

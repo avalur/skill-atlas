@@ -1,6 +1,6 @@
 [project]
 name = "skill-atlas"
-version = "0.1.0"
+version = "0.2.0"
 description = "Discovery, structural validation, and static security audit for AI Agent Skills"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,10 +26,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/skill_atlas"]
 
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.1.0",
     "ruff>=0.4.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
 ]
 
 [tool.ruff]
@@ -41,11 +49,11 @@ select = ["E", "F", "I", "UP", "B", "BLE", "S", "RUF"]
 ignore = ["E501", "S603", "S607"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "S106"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 markers = [
     "network: opt-in tests that call the real GitHub API",
     "slow: slow running tests",

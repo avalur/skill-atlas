@@ -1,11 +1,18 @@
 """Local filesystem discovery for AI Agent Skills."""
 
+import datetime
+import hashlib
 import os
 import subprocess
 from pathlib import Path
 
-from skill_atlas.git.client import get_file_provenance, get_repo_info, is_git_repository
-from skill_atlas.models import Skill
+from skill_atlas.git.client import (
+    get_directory_last_commit,
+    get_file_provenance,
+    get_repo_info,
+    is_git_repository,
+)
+from skill_atlas.models import Skill, classify_origin
 from skill_atlas.parsers.markdown import parse_skill_markdown
 
 IGNORED_DIRS = {
@@ -81,6 +88,17 @@ def _collect_git_repo_files(repo_root: Path) -> list[str]:
     return []
 
 
+def _calculate_content_hash(companion_contents: dict[str, str]) -> str:
+    """Calculate a deterministic sha256 hash of all text contents in the skill."""
+    hasher = hashlib.sha256()
+    for rel_p in sorted(companion_contents.keys()):
+        hasher.update(rel_p.encode("utf-8"))
+        hasher.update(b"\x00")
+        hasher.update(companion_contents[rel_p].encode("utf-8"))
+        hasher.update(b"\x00")
+    return hasher.hexdigest()
+
+
 def discover_local_skills(target_path: Path) -> list[Skill]:
     """Discover all skills in the given local directory or file path."""
     skills: list[Skill] = []
@@ -96,6 +114,7 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
 
     manifest_paths: list[Path] = []
     seen_manifests: set[Path] = set()
+    seen_skill_dirs: set[Path] = set()
 
     if target.is_file():
         if target.name.lower() == "skill.md":
@@ -114,6 +133,11 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
     # Process each discovered manifest
     for manifest in manifest_paths:
         skill_dir = manifest.parent
+        resolved_skill_dir = skill_dir.resolve()
+        if resolved_skill_dir in seen_skill_dirs:
+            continue
+        seen_skill_dirs.add(resolved_skill_dir)
+
         fallback_name = skill_dir.name
 
         try:
@@ -155,12 +179,38 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
         # Resolve Git provenance
         commit_sha: str | None = None
         commit_date: str | None = None
+        updated_sha: str | None = None
+        updated_date: str | None = None
+        updated_source = "git"
+
         if repo_root:
             commit_sha, commit_date = get_file_provenance(repo_root, manifest_rel_path)
+            updated_sha, updated_date = get_directory_last_commit(repo_root, rel_skill_path)
 
         available_files, companion_contents = _collect_skill_files(skill_dir)
         if raw_content is not None:
             companion_contents["SKILL.md"] = raw_content
+
+        if not updated_date:
+            # Fallback to file mtime
+            latest_mtime = 0.0
+            for rel_f in available_files:
+                try:
+                    st = (skill_dir / rel_f).stat()
+                    if st.st_mtime > latest_mtime:
+                        latest_mtime = st.st_mtime
+                except OSError:
+                    pass
+            if latest_mtime > 0:
+                dt = datetime.datetime.fromtimestamp(latest_mtime, tz=datetime.UTC)
+                updated_date = dt.isoformat()
+                updated_source = "mtime"
+            elif commit_date:
+                updated_date = commit_date
+                updated_sha = commit_sha
+
+        origin = classify_origin(rel_skill_path)
+        content_hash = _calculate_content_hash(companion_contents)
 
         skill = Skill(
             name=parse_info["name"],
@@ -169,6 +219,10 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
             repo_url=repo_url,
             commit=commit_sha,
             commit_date=commit_date,
+            updated_commit=updated_sha,
+            updated_date=updated_date,
+            updated_source=updated_source,
+            origin=origin,
             path=rel_skill_path,
             version=parse_info.get("version"),
             author=parse_info.get("author"),
@@ -183,6 +237,7 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
             base_dir=str(skill_dir),
             repo_root_dir=str(repo_root) if repo_root else None,
             parse_error=parse_info.get("parse_error"),
+            content_hash=content_hash,
         )
 
         skills.append(skill)

@@ -1,6 +1,7 @@
 """Rules module for Skill Atlas."""
 
 from skill_atlas.rules.base import Rule, RuleRegistry
+from skill_atlas.rules.discovery import StaleDuplicateRule
 from skill_atlas.rules.schema import (
     BrokenLinkReferenceRule,
     InvalidFrontmatterRule,
@@ -37,6 +38,9 @@ def create_default_registry() -> RuleRegistry:
     registry.register(SensitivePathAccessRule())
     registry.register(PromptInjectionRule())
 
+    # Discovery rules (DSC-001)
+    registry.register(StaleDuplicateRule())
+
     return registry
 
 
@@ -53,6 +57,7 @@ __all__ = [
     "RuleRegistry",
     "SensitivePathAccessRule",
     "ShortDescriptionRule",
+    "StaleDuplicateRule",
     "UnsafeNetworkExecutionRule",
     "create_default_registry",
 ]

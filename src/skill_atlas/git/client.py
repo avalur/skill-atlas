@@ -142,3 +142,34 @@ def get_file_provenance(repo_root: Path, file_rel_path: str) -> tuple[str | None
         return None, None
     except Exception:  # noqa: BLE001
         return None, None
+
+
+def get_directory_last_commit(repo_root: Path, dir_rel_path: str) -> tuple[str | None, str | None]:
+    """Retrieve the newest commit hash and author ISO date that touched a directory."""
+    try:
+        path_arg = dir_rel_path if dir_rel_path and dir_rel_path != "." else "."
+        res = subprocess.run(
+            [
+                "git",
+                "log",
+                "-1",
+                "--format=%H %aI",
+                "--",
+                path_arg,
+            ],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=GIT_ENV,
+            check=False,
+        )
+        output = res.stdout.strip()
+        if output:
+            parts = output.split(" ", 1)
+            commit_hash = parts[0]
+            commit_date = parts[1] if len(parts) > 1 else None
+            return commit_hash, commit_date
+        return None, None
+    except Exception:  # noqa: BLE001
+        return None, None
