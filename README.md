@@ -81,3 +81,4 @@ uv run skill-atlas serve
 
 - [SPEC.md](./SPEC.md) — Iteration 1 specification (CLI MVP).
 - [AGENTS.md](./AGENTS.md) — Instructions, architectural conventions, and guidelines for AI agents.
+- [memory/](./memory/README.md) — Persistent shared memory capturing past decisions, architectural patterns, and gotchas across agent sessions.

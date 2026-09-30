@@ -7,6 +7,11 @@
 - **User Communication**: Russian (as requested by the user during interactive sessions).
 - **Repository Artifacts**: Strictly English for all code, comments, documentation, commit messages, specifications, and issues.
 
+## Shared Memory Policy
+To maintain continuity and collective intelligence across stateless agent sessions:
+- **ALWAYS read `memory/` before a task**: Inspect `memory/README.md` and relevant memory documents (`architecture.md`, `workflows.md`, `gotchas.md`, `rules-and-skills.md`, `known-issues.md`) before analyzing or modifying code. Never start a task without checking what we previously learned.
+- **ALWAYS update shared memory with the `shared-memory` skill**: Whenever you introduce architectural changes, resolve hard-learned gotchas, alter workflows, or complete major tasks, update the corresponding files in `memory/` following the guidelines in `.claude/skills/shared-memory/SKILL.md`.
+
 ## Tech Stack
 - **Language**: Python >= 3.11
 - **Package Management & Build**: `uv` (Fast Python package installer and resolver)
@@ -23,6 +28,19 @@ skill-atlas/
 ├── README.md              # Project overview and quickstart
 ├── SPEC.md                # Current iteration specification (CLI MVP)
 ├── pyproject.toml         # Project manifest and dependencies (uv)
+├── memory/                # Shared project memory across AI agent sessions
+│   ├── README.md          # Index and guide to shared memory
+│   ├── architecture.md    # System architecture, engine pipeline, and Web UI
+│   ├── workflows.md       # Git PR workflow, DoD, CI matrix, and policies
+│   ├── gotchas.md         # SAML SSO, path resolution, companion files, rate limits
+│   ├── rules-and-skills.md# Schema, security, and discovery rule taxonomy
+│   └── known-issues.md    # Review findings and pending improvements
+├── .claude/
+│   └── skills/
+│       └── shared-memory/ # Skill for maintaining project shared memory
+│           ├── SKILL.md
+│           └── scripts/
+│               └── verify_memory.py
 ├── src/
 │   └── skill_atlas/       # Package source code
 │       ├── __init__.py
@@ -33,6 +51,8 @@ skill-atlas/
 │       ├── discovery/     # Skill discovery across directories and repos
 │       ├── parsers/       # SKILL.md and metadata parsing
 │       ├── rules/         # Validation rules (schema, security)
+│       ├── similarity.py  # Similarity calculation engine
+│       ├── web.py         # FastAPI server and Web UI
 │       └── reporters/     # Result reporting (console, json)
 └── tests/                 # Tests (unit, integration, fixtures)
     ├── test_scanner.py
@@ -81,3 +101,4 @@ Integration tests for every case in the spec (every rule, every CLI option, ever
 5. **Test Fixtures**: Every new schema or security rule must include a minimal fixture in `tests/fixtures/` covering both positive and negative cases.
 6. **Output Format Support**: Always maintain structured JSON export capabilities alongside rich terminal output for CI/CD pipelines and agent workflows.
 7. **Pull Request Workflow**: All new changes, fixes, and features must be submitted via Pull Requests from a dedicated feature branch. Direct pushes to `main` are strictly prohibited.
+8. **Shared Memory Maintenance**: Always read `memory/` before starting a task to understand project context and history. Always update `memory/` using the `shared-memory` skill whenever new patterns or decisions emerge.
