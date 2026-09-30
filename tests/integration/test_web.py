@@ -285,3 +285,16 @@ def test_web_similar_skills_endpoint(tmp_path: Path):
     assert sim_data["total_skills"] == 2
     assert len(sim_data["matches"]) == 1
     assert sim_data["matches"][0]["score"] >= 0.6
+
+
+def test_web_filter_ui_elements():
+    """Verify that the web interface includes the search/filter input for skills list."""
+    app = create_app()
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'id="filter-input"' in resp.text
+    assert 'placeholder="Filter skills by words in name or description..."' in resp.text
+    assert 'oninput="renderSkills()"' in resp.text
+    assert "filterWords" in resp.text
+    assert "setOriginFilter" in resp.text
