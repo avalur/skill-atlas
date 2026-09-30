@@ -3,22 +3,25 @@
 from __future__ import annotations
 
 import json
+import re
 
 from typer.testing import CliRunner
 
 from skill_atlas.cli import app
 
+ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 runner = CliRunner()
 
 
 def test_cli_map_help() -> None:
     res = runner.invoke(app, ["map", "--help"])
     assert res.exit_code == 0
-    assert "Generate a Skill Map" in res.stdout
-    assert "--method" in res.stdout
-    assert "--ai" in res.stdout
-    assert "--jev" in res.stdout
-    assert "--threshold" in res.stdout
+    clean_out = ANSI_RE.sub("", res.stdout)
+    assert "Generate a Skill Map" in clean_out
+    assert "--method" in clean_out
+    assert "--ai" in clean_out
+    assert "--jev" in clean_out
+    assert "--threshold" in clean_out
 
 
 def test_cli_map_heuristic_visual_repo() -> None:
@@ -27,10 +30,11 @@ def test_cli_map_heuristic_visual_repo() -> None:
         ["map", "tests/fixtures/visual_repo/", "--include-test-data"],
     )
     assert res.exit_code == 0
-    assert "Skill Map for:" in res.stdout
-    assert "Heuristic" in res.stdout
-    assert "shared-memory" in res.stdout
-    assert "memory-vault" in res.stdout
+    clean_out = ANSI_RE.sub("", res.stdout)
+    assert "Skill Map for:" in clean_out
+    assert "Heuristic" in clean_out
+    assert "shared-memory" in clean_out
+    assert "memory-vault" in clean_out
 
 
 def test_cli_map_json_format() -> None:
@@ -59,8 +63,9 @@ def test_cli_map_ai_replay() -> None:
         ],
     )
     assert res.exit_code == 0
-    assert "AI (Claude)" in res.stdout
-    assert "Agent Memory Management" in res.stdout
+    clean_out = ANSI_RE.sub("", res.stdout)
+    assert "AI (Claude)" in clean_out
+    assert "Agent Memory Management" in clean_out
 
 
 def test_cli_map_jev_replay() -> None:
@@ -77,8 +82,9 @@ def test_cli_map_jev_replay() -> None:
         ],
     )
     assert res.exit_code == 0
-    assert "AI (TypeSafe Jev)" in res.stdout
-    assert "Agent Memory & State" in res.stdout
+    clean_out = ANSI_RE.sub("", res.stdout)
+    assert "AI (TypeSafe Jev)" in clean_out
+    assert "Agent Memory & State" in clean_out
 
 
 def test_cli_map_invalid_method() -> None:
