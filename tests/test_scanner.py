@@ -260,10 +260,14 @@ def test_sec_002_table_driven():
     matching_cases = [
         "rm -rf /",
         "rm -rf ~",
+        "rm -rf ~/",
+        "rm -rf ~/*",
         "sudo rm -rf /*",
         "rm -fr /",
         "rm -r -f /",
         "rm -rf $HOME",
+        "rm -rf $HOME/",
+        "rm -rf $HOME/*",
         ":(){ :|:& };:",
         "mkfs.ext4 /dev/sda1",
     ]
@@ -413,3 +417,42 @@ def test_sch_004_ignores_fallback_name():
     skill = Skill(name="invalid_NAME_123!", path=".", frontmatter={})
     findings = rule.check(skill)
     assert len(findings) == 0
+
+
+def test_cli_sample_target():
+    res = runner.invoke(app, ["scan", ":sample"])
+    assert res.exit_code in (0, 1)
+    assert "Found" in res.stdout or "Scanning skills in:" in res.stdout
+
+    res_opt = runner.invoke(app, ["scan", "--sample"])
+    assert res_opt.exit_code in (0, 1)
+    assert "Found" in res_opt.stdout or "Scanning skills in:" in res_opt.stdout
+
+
+def test_scan_result_warnings_and_console_output():
+    from io import StringIO
+
+    from rich.console import Console
+
+    from skill_atlas.models import ScanResult, ScanSummary
+    from skill_atlas.reporters.console import ConsoleReporter
+
+    result = ScanResult(
+        target=".",
+        summary=ScanSummary(total_skills=1, passed=1, failed=0),
+        skills=[Skill(name="demo-skill", path=".", description="Valid description here")],
+        warnings=["Repository tree was truncated by GitHub API (>100,000 files)"],
+    )
+
+    # Warnings cause has_failures=True when fail_on="warn"
+    assert result.has_failures(fail_on="error") is False
+    assert result.has_failures(fail_on="warn") is True
+    assert result.exit_code(fail_on="warn") == 1
+
+    stream = StringIO()
+    console = Console(file=stream, force_terminal=True, width=100)
+    reporter = ConsoleReporter(console=console)
+    reporter.render(result, fail_on="error")
+    out = stream.getvalue()
+    assert "Warnings:" in out
+    assert "Repository tree was truncated" in out

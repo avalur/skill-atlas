@@ -1,6 +1,7 @@
 """Command-line interface for Skill Atlas."""
 
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -105,10 +106,27 @@ def scan_command(
             help="Verbose output including passed checks.",
         ),
     ] = False,
+    sample: Annotated[
+        bool,
+        typer.Option(
+            "--sample",
+            help="Scan bundled sample test fixtures.",
+        ),
+    ] = False,
 ) -> None:
     """Scan skills for structural consistency and security vulnerabilities."""
-    # Validate options
     target_clean = target.strip()
+    if sample or target_clean in (":sample", "sample"):
+        fixtures_dir = Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures"
+        if (fixtures_dir / "vulnerable_skills").is_dir():
+            target_clean = str(fixtures_dir / "vulnerable_skills")
+        elif fixtures_dir.is_dir():
+            target_clean = str(fixtures_dir)
+        else:
+            typer.secho("Error: Sample fixtures not found.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2)
+
+    # Validate options
     if target_clean.startswith("-"):
         typer.secho(
             f"Error: Invalid target '{target}'. Target cannot start with '-'.",
@@ -158,7 +176,7 @@ def scan_command(
             include_test_data=include_test_data,
         )
         result: ScanResult = scanner.scan(
-            target=target,
+            target=target_clean,
             ref=ref,
             include_test_data=include_test_data,
             on_progress=on_progress,
@@ -307,6 +325,7 @@ def similar_command(
             ref=ref,
             include_test_data=include_test_data,
             on_progress=on_progress,
+            discovery_only=True,
         )
 
         if format_clean != "json" and sys.stderr.isatty():

@@ -324,3 +324,76 @@ def test_web_similar_ui_controls():
     assert 'id="similar-query-banner"' in resp.text
     assert "findSimilarForSkill" in resp.text
     assert "loadSimilarSkills" in resp.text
+
+
+def test_web_origin_port_pinning():
+    """Verify that Origin with wrong/arbitrary port is rejected with 403."""
+    app = create_app(host="127.0.0.1", port=8765)
+    client = TestClient(app)
+
+    # Valid origin on pinned port
+    resp_ok = client.post(
+        "/api/scans",
+        json={"target": "https://github.com/example/repo"},
+        headers={"Origin": "http://127.0.0.1:8765"},
+    )
+    # Reaches scan validation / CSRF, not blocked by Origin check
+    assert resp_ok.status_code in (403, 422, 200)
+    if resp_ok.status_code == 403:
+        assert "cross-origin" not in resp_ok.text.lower()  # Blocked by CSRF, not Origin
+
+    # Invalid origin with different port
+    resp_bad = client.post(
+        "/api/scans",
+        json={"target": "https://github.com/example/repo"},
+        headers={"Origin": "http://127.0.0.1:9999"},
+    )
+    assert resp_bad.status_code == 403
+    assert "cross-origin" in resp_bad.text.lower()
+
+
+def test_web_similar_validation_and_caching(tmp_path: Path):
+    """Verify threshold/top_k parameter validation and pairwise caching."""
+    repo = make_repo(
+        tmp_path / "web_sim_cache",
+        tree={
+            ".claude/skills/s1/SKILL.md": "---\nname: s1\ndescription: First skill for test.\n---\n",
+            ".claude/skills/s2/SKILL.md": "---\nname: s2\ndescription: Second skill for test.\n---\n",
+        },
+    )
+    app = create_app(allow_local=True)
+    client = TestClient(app)
+
+    resp = client.post("/api/scans", json={"target": str(repo)})
+    assert resp.status_code == 200
+    scan_id = resp.json()["scan_id"]
+
+    for _ in range(50):
+        res_poll = client.get(f"/api/scans/{scan_id}")
+        if res_poll.status_code == 200 and "skills" in res_poll.json():
+            break
+        time.sleep(0.05)
+
+    # Invalid threshold
+    assert client.get(f"/api/scans/{scan_id}/similar?threshold=1.5").status_code == 422
+    assert client.get(f"/api/scans/{scan_id}/similar?threshold=-0.1").status_code == 422
+
+    # Invalid top_k
+    assert client.get(f"/api/scans/{scan_id}/similar?top_k=0").status_code == 422
+    assert client.get(f"/api/scans/{scan_id}/similar?top_k=101").status_code == 422
+
+    # Valid call populates cache
+    sim1 = client.get(f"/api/scans/{scan_id}/similar?threshold=0.1").json()
+    sim2 = client.get(f"/api/scans/{scan_id}/similar?threshold=0.1").json()
+    assert sim1 == sim2
+
+
+def test_web_similar_xss_protection():
+    """Verify that Similar panel does not contain vulnerable onclick HTML attributes."""
+    app = create_app()
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    # The unsafe onclick attribute pattern must NOT be in the source HTML
+    assert 'onclick="filterByKeyword(' not in resp.text
+    assert "No GITHUB_TOKEN: limited to ~25 skills per hour" in resp.text

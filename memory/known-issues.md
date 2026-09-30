@@ -1,27 +1,21 @@
 # Known Issues & Backlog
 
-This document captures verified findings and improvement areas identified during code reviews (specifically `claude-review-iteration-2-followup.md`) to be addressed in subsequent iterations.
+This document captures verified findings, resolved review items, and potential future improvements for `Skill Atlas`.
 
-## 1. Security Vulnerabilities
-- **[C1] Stored XSS in Similar Skills panel**:
-  - `web.py` creates inline click handlers with `onclick="filterByKeyword('${escapeHtml(...)')"` in the Similar panel. HTML entity escaping decodes inside attribute values, enabling script injection if a hostile repository contains a malicious skill name.
-  - *Target Fix*: Move script to dedicated static file, remove `'unsafe-inline'` from CSP, and bind event listeners via `addEventListener` with DOM element creation.
+## 1. Resolved Review Items (`claude-review-iteration-2-followup.md`)
+- **[C1] Stored XSS in Similar Skills panel**: Resolved. Replaced inline HTML string interpolation and inline `onclick` handlers with safe DOM element creation (`createElement`, `appendChild`) and direct event listener binding.
+- **[M1] `gh` CLI token escalation & health rate-limit**: Resolved. Token lookup is now cached, and the `/api/health` endpoint caches rate limit responses (TTL: 30s) to avoid burning API quota on frequent frontend polls. An informative status bar hint is displayed when no token is active.
+- **[M2] Root-level skill repository downloads**: Resolved. Restricted companion file discovery for root-level `SKILL.md` to standard directories (`scripts/`, `reference/`, `assets/`, `docs/`, `bin/`) and explicit links found in markdown body, preventing runaway file downloads.
+- **[M3] Tree truncation visibility**: Resolved. Added `warnings: list[str]` to `ScanResult`, ensuring repository tree truncation (>100k files) is reported in JSON and terminal outputs and triggers a non-zero exit code when `--fail-on warn` is set.
+- **[M4] Real-repository layout integration tests**: Resolved. Added pinned-SHA network integration tests for MPS and Koog in `tests/integration/test_network.py` with graceful quota skip handlers.
+- **[M5] Quadratic similarity comparison**: Resolved. Implemented `_SkillFeatures` token precomputation, unpromising pair pruning, and per-scan similarity result caching in `ScanJob`.
+- **Minor Polish Items**:
+  - Enhanced `SEC-002` regex with trailing slash and glob support (`rm -rf ~/`, `rm -rf $HOME/*`).
+  - Added port pinning in Origin header middleware (`http://{host}:{port}`).
+  - Added CLI `:sample` target and `--sample` flag for fast local fixture auditing.
+  - Added test-data detection for `integration-tests?` directories.
 
-## 2. Architecture & Scanner Optimizations
-- **[M1] Implicit `gh` CLI token escalation**:
-  - `GitHubClient` automatically picks up `gh auth token`, granting access to private repositories without explicit user opt-in. `/api/health` queries rate-limits on every page hit.
-  - *Target Fix*: Make CLI token resolution explicit/opt-in, and cache health endpoint responses.
-- **[M2] Root-level skill repository downloads**:
-  - If `SKILL.md` is placed at the root of a repository, the scanner currently attempts to download all files.
-  - *Target Fix*: Restrict root skill companion collection to conventional folders (`scripts/`, `reference/`, `assets/`) and explicitly referenced links.
-- **[M3] Tree truncation visibility**:
-  - Truncated trees emit progress events but do not persist warnings into `ScanResult.warnings`.
-  - *Target Fix*: Add `warnings: list[str]` to `ScanResult` and display in reporters.
-- **[M5] Quadratic similarity comparison**:
-  - Similarity pairwise comparison runs $O(n^2)$ `SequenceMatcher` calls on every web request.
-  - *Target Fix*: Inverted index on tokens to prune candidate pairs, score precomputation, and per-scan cache.
-
-## 3. Minor Polish Items
-- `SEC-002` regex update: add trailing slash support for `rm -rf ~/` and `rm -rf $HOME/`.
-- `Origin` header validation: pin exact `http://{host}:{port}` rather than wildcard port prefix.
-- Untracked sandbox runners: track or ignore `sbx-claude.sh` and `sbx-junie.sh`.
+## 2. Future Improvements Backlog
+- **GitLab & Bitbucket Remote Discovery**: Extend remote discovery engine to support GitLab and Bitbucket REST APIs using the same zero-clone tree inspection approach.
+- **Custom Rule Plugins**: Allow loading user-defined Python validation rules dynamically from a local configuration directory.
+- **Similarity Visualization**: Add an interactive graph view to the Web UI connecting similar skills across repositories.

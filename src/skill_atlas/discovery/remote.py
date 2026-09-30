@@ -1,5 +1,6 @@
 """Remote Git repository discovery for AI Agent Skills."""
 
+import re
 import threading
 import time
 from pathlib import Path
@@ -43,6 +44,8 @@ def _discover_via_github_api(
     on_progress: ProgressCallback | None = None,
     cancel_event: threading.Event | None = None,
     start_time: float | None = None,
+    discovery_only: bool = False,
+    warnings: list[str] | None = None,
 ) -> list[Skill]:
     """Fast discovery using GitHub REST API and raw file downloads."""
     gh = gh_client or GitHubClient()
@@ -94,10 +97,16 @@ def _discover_via_github_api(
             client, owner, repo, target_ref, is_explicit_ref=bool(ref)
         )
         if is_truncated:
+            trunc_msg = (
+                f"Repository tree for {owner}/{repo} was truncated by GitHub API (>100,000 files). "
+                "Some nested skills may be omitted."
+            )
             emit(
                 Stage.DISCOVER,
-                f"⚠️ Warning: Repository tree for {owner}/{repo} was truncated by GitHub API (>100,000 files). Some nested skills may be omitted.",
+                f"⚠️ Warning: {trunc_msg}",
             )
+            if warnings is not None:
+                warnings.append(trunc_msg)
 
         all_paths = [item["path"] for item in tree_items if item.get("type") == "blob"]
         path_to_size = {
@@ -150,8 +159,13 @@ def _discover_via_github_api(
             )
 
             if skill_dir == ".":
+                # For root-level skills, restrict companion files to standard folders and root helper scripts
+                valid_root_dirs = ("scripts/", "reference/", "assets/", "docs/", "bin/")
                 available_files = [
-                    p for p in all_paths if not (nested_prefixes and p.startswith(nested_prefixes))
+                    p
+                    for p in all_paths
+                    if not (nested_prefixes and p.startswith(nested_prefixes))
+                    and (p.startswith(valid_root_dirs) or ("/" not in p and p != "SKILL.md"))
                 ]
             else:
                 prefix = f"{skill_dir}/"
@@ -169,17 +183,25 @@ def _discover_via_github_api(
             if raw_content is not None:
                 companion_contents["SKILL.md"] = raw_content
 
-            for rel_f in available_files:
-                check_cancel()
-                if rel_f != "SKILL.md" and Path(rel_f).suffix.lower() not in BINARY_EXTENSIONS:
-                    full_repo_path = f"{skill_dir}/{rel_f}" if skill_dir != "." else rel_f
-                    file_size = path_to_size.get(full_repo_path, 0)
-                    if file_size <= 1_048_576:  # 1 MB
-                        f_content = gh.fetch_file_content(
-                            client, owner, repo, active_branch, full_repo_path
-                        )
-                        if f_content is not None:
-                            companion_contents[rel_f] = f_content
+            if not discovery_only:
+                if skill_dir == "." and raw_content:
+                    ref_matches = re.findall(r"\[.*?\]\((?!https?://|mailto:)(.*?)\)", raw_content)
+                    for rm in ref_matches:
+                        clean_ref = rm.split("#")[0].split("?")[0].strip().lstrip("./")
+                        if clean_ref in all_paths and clean_ref not in available_files:
+                            available_files.append(clean_ref)
+
+                for rel_f in available_files:
+                    check_cancel()
+                    if rel_f != "SKILL.md" and Path(rel_f).suffix.lower() not in BINARY_EXTENSIONS:
+                        full_repo_path = f"{skill_dir}/{rel_f}" if skill_dir != "." else rel_f
+                        file_size = path_to_size.get(full_repo_path, 0)
+                        if file_size <= 1_048_576:  # 1 MB
+                            f_content = gh.fetch_file_content(
+                                client, owner, repo, active_branch, full_repo_path
+                            )
+                            if f_content is not None:
+                                companion_contents[rel_f] = f_content
 
             check_cancel()
             emit(
@@ -254,6 +276,8 @@ def discover_remote_skills(
     http_client: httpx.Client | None = None,
     on_progress: ProgressCallback | None = None,
     cancel_event: threading.Event | None = None,
+    discovery_only: bool = False,
+    warnings: list[str] | None = None,
 ) -> list[Skill]:
     """Discover skills in a remote Git repository using GitHub REST API and raw downloads."""
     gh_match = parse_github_url(url)
@@ -269,4 +293,6 @@ def discover_remote_skills(
         http_client=http_client,
         on_progress=on_progress,
         cancel_event=cancel_event,
+        discovery_only=discovery_only,
+        warnings=warnings,
     )

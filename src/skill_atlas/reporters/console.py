@@ -107,6 +107,12 @@ class ConsoleReporter:
                         )
                 self.console.print()
 
+        if result.warnings:
+            self.console.print("[bold yellow]⚠️  Warnings:[/bold yellow]")
+            for w in result.warnings:
+                self.console.print(f"  [yellow]• {_sanitize(w)}[/yellow]")
+            self.console.print()
+
         self.console.print(RichRule(style="dim"))
         self.console.print("[bold]Summary:[/bold]")
         self.console.print(f"  Scanned Skills: {result.summary.total_skills}")

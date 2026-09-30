@@ -130,7 +130,7 @@ class DangerousCommandRule(Rule):
         PatternDefinition(
             "Destructive root deletion",
             re.compile(
-                r"\b(sudo\s+)?rm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-r\s+-f|-f\s+-r)\s+(--no-preserve-root\s+)?(/|~|\$HOME)(\*|/\*)?(\s|$|;|&|\|)"
+                r"\b(sudo\s+)?rm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-r\s+-f|-f\s+-r)\s+(--no-preserve-root\s+)?(/|~|\$HOME)(/|\*|/\*)?(\s|$|;|&|\|)"
             ),
         ),
         PatternDefinition(
