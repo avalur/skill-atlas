@@ -1,6 +1,7 @@
 """Integration tests for CLI contract, options, and deterministic exit codes."""
 
 import json
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -8,12 +9,15 @@ from typer.testing import CliRunner
 from skill_atlas.cli import app
 from tests.conftest import make_repo
 
+ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
 
 def test_cli_help(cli_runner: CliRunner):
     res = cli_runner.invoke(app, ["--help"])
     assert res.exit_code == 0
-    assert "scan" in res.stdout
-    assert "serve" in res.stdout
+    clean_out = ANSI_RE.sub("", res.stdout)
+    assert "scan" in clean_out
+    assert "serve" in clean_out
 
 
 def test_cli_version(cli_runner: CliRunner):
@@ -109,7 +113,8 @@ def test_cli_json_output_structure(tmp_path: Path, cli_runner: CliRunner):
 def test_cli_serve_help(cli_runner: CliRunner):
     res = cli_runner.invoke(app, ["serve", "--help"])
     assert res.exit_code == 0
-    assert "--host" in res.stdout
-    assert "--port" in res.stdout
-    assert "--open" in res.stdout
-    assert "--allow-local" in res.stdout
+    clean_out = ANSI_RE.sub("", res.stdout)
+    assert "--host" in clean_out
+    assert "--port" in clean_out
+    assert "--open" in clean_out
+    assert "--allow-local" in clean_out
