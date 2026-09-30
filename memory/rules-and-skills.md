@@ -33,6 +33,9 @@ This document summarizes the validation rules, origin layouts, and similarity sc
 The scanner classifies skill paths into four primary origins (`SkillOrigin`):
 1. **`agent-config`**: Skills configured for AI agents (`.claude/skills`, `.agents/skills`, `.junie`, `.cursor`, `.codex`, `.github/skills`).
    - *Behavior*: Duplicate copies with identical names are treated as mirrors; the newest version is displayed, with `DSC-001` raised if out of sync.
+   - *Repository Skills*:
+     - `shared-memory`: Persistent cross-session project memory management.
+     - `browser-video-tester`: Autonomous human-like QA browser testing with live MP4 video recording and self-eval reporting.
 2. **`product`**: Skills bundled as end-user application features (`src/main/resources`, `resources/`, `plugins/*/`, `languages/*/`).
    - *Behavior*: Same-named skills in distinct plugins remain separate entities and are never merged.
 3. **`test-data`**: Synthetic skills in test suites (`tests/`, `testData/`, `fixtures/`).
