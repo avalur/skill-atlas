@@ -1,0 +1,36 @@
+[
+  {
+    "name": "Agent Memory Management",
+    "reason": "These skills persist, store, or index agent session state and project memory across sessions.",
+    "skills": [
+      "shared-memory",
+      "memory-vault",
+      "session-history"
+    ]
+  },
+  {
+    "name": "Code Quality Tools",
+    "reason": "These skills review, lint, or refactor source code to improve its quality.",
+    "skills": [
+      "code-assistant",
+      "lint-helper",
+      "refactor-bot"
+    ]
+  },
+  {
+    "name": "Security Auditing",
+    "reason": "These skills audit for security risks such as leaked credentials, exposed secrets, and suspicious network egress.",
+    "skills": [
+      "security-guard",
+      "secret-scanner",
+      "network-firewall"
+    ]
+  },
+  {
+    "name": "Data Synchronization",
+    "reason": "This skill syncs data records between local caches and remote storage.",
+    "skills": [
+      "data-sync"
+    ]
+  }
+]

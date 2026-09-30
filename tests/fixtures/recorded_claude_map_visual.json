@@ -1,0 +1,31 @@
+[
+  {
+    "name": "Agent Memory Management",
+    "reason": "These skills persist and maintain agent session memory and project state across AI interactions.",
+    "skills": [
+      "shared-memory",
+      "memory-vault"
+    ]
+  },
+  {
+    "name": "Code Quality Assistance",
+    "reason": "This skill provides automated code review, refactoring suggestions, and static analysis.",
+    "skills": [
+      "code-assistant"
+    ]
+  },
+  {
+    "name": "Security Auditing",
+    "reason": "This skill audits agent configurations for security issues and credential leaks.",
+    "skills": [
+      "security-guard"
+    ]
+  },
+  {
+    "name": "Data Synchronization",
+    "reason": "This skill synchronizes data records between local caches and remote storage.",
+    "skills": [
+      "data-sync"
+    ]
+  }
+]

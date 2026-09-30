@@ -1,0 +1,52 @@
+[
+  {
+    "name": "Agent Memory & State",
+    "reason": "Classified by TypeSafe Jev: Memory persistence, state management, session history, shared context.",
+    "skills": [
+      "memory-vault",
+      "session-history",
+      "shared-memory"
+    ],
+    "keywords": [
+      "memory",
+      "state"
+    ]
+  },
+  {
+    "name": "Code Quality & Engineering",
+    "reason": "Classified by TypeSafe Jev: Code assistance, linting, refactoring, review, language tooling.",
+    "skills": [
+      "code-assistant",
+      "lint-helper",
+      "refactor-bot"
+    ],
+    "keywords": [
+      "code",
+      "review"
+    ]
+  },
+  {
+    "name": "Security & Auditing",
+    "reason": "Classified by TypeSafe Jev: Security analysis, secret scanning, credential leaks, network audit, safety.",
+    "skills": [
+      "network-firewall",
+      "secret-scanner",
+      "security-guard"
+    ],
+    "keywords": [
+      "security",
+      "audit"
+    ]
+  },
+  {
+    "name": "Data & Storage Sync",
+    "reason": "Classified by TypeSafe Jev: Data synchronization, cloud storage, cache management, file handling.",
+    "skills": [
+      "data-sync"
+    ],
+    "keywords": [
+      "data",
+      "sync"
+    ]
+  }
+]

@@ -366,3 +366,21 @@ The `browser-video-tester` agent skill enables autonomous, human-like QA testing
 2. **Live Video Capture**: Generates high-fps recordings of browser flows and converts them to `.mp4` using `ffmpeg`.
 3. **Automated Audit**: Audits browser JavaScript console errors and HTTP network failures.
 4. **Structured Artifacts**: Outputs `test_session.mp4`, `report.md`, `timeline.json`, and step keyframe screenshots under `artifacts/browser_tests/`.
+
+---
+
+## 10. The Skill Map (Clustering, AI & Jev Classification)
+
+The Skill Map provides high-level functional clustering and thematic visualization of discovered skills:
+1. **Without AI (Heuristic)**:
+   - Groups skills using shared keywords in skill names, descriptions, and tags combined with pairwise similarity graphs.
+   - Names clusters by dominant domain keywords and generates actionable reasons for grouping.
+2. **With AI (Claude Code `claude -p`)**:
+   - Clusters skills non-interactively using Claude CLI prompt, generating concise category titles and rationale.
+   - Supports deterministic record and replay (`--record` / `--replay`) for offline environments and CI pipelines.
+3. **With TypeSafe Jev (System One Classification)**:
+   - Classifies skills into typed functional domains (`memory_and_state`, `code_and_review`, `security_and_audit`, `data_and_sync`, `general_automation`) using TypeSafe AI's Jev model via the `Choice` API (`typesafe-sdk`).
+4. **Ground-Truth Benchmark Check**:
+   - 10-skill benchmark dataset with manual golden groupings to validate and compare clustering quality against human judgment.
+5. **Interactive Web View**:
+   - `Skill Map` drawer and interactive cards in Web UI, supporting instant filtering and replayable test fixtures.

@@ -104,6 +104,14 @@ def test_walkthrough_visual_regression(
     page.locator("#similar-list > div").first.wait_for(state="visible", timeout=5000)
     capture_and_compare("05_similar_skills_panel")
 
+    # -------------------------------------------------------------
+    # MOMENT 6: Skill Map Panel (Clustered view, method switch)
+    # -------------------------------------------------------------
+    page.click("#map-btn")
+    page.locator("#map-section").wait_for(state="visible", timeout=5000)
+    page.locator(".map-cluster-card").first.wait_for(state="visible", timeout=5000)
+    capture_and_compare("06_skill_map_panel")
+
     # Allow browser context to flush and finalize video recording
     video_dest = visual_paths["recordings"] / "video_walkthrough.webm"
     try:

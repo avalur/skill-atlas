@@ -66,6 +66,9 @@ skill-atlas/
 - Run CLI: `uv run skill-atlas --help`
 - Scan directory or repo: `uv run skill-atlas scan ./skills` or `uv run skill-atlas scan https://github.com/org/repo.git`
 - Start local web UI: `uv run skill-atlas serve`
+- Run skill map (heuristic): `uv run skill-atlas map ./skills`
+- Run skill map (Claude AI): `uv run skill-atlas map ./skills --ai`
+- Run skill map (TypeSafe Jev): `uv run skill-atlas map ./skills --jev`
 - Run tests: `uv run pytest -v`
 - Run visual regression tests: `uv run pytest tests/visual`
 - Update golden visual baselines: `UPDATE_BASELINES=1 uv run pytest tests/visual`

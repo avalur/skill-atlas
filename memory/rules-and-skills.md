@@ -52,3 +52,14 @@ The `similar` command and web panel calculate similarity using composite scoring
 
 $S_{composite} = S_{name} + S_{desc} + S_{tags} + S_{struct} + S_{scripts}$
 Matches with $S_{composite} \ge \text{threshold}$ are reported.
+
+## 4. The Skill Map & Classification Taxonomy
+The Skill Map groups discovered skills through three distinct methodologies:
+1. **Heuristic (Shared Words)**: BFS connected component grouping combining pairwise composite similarity ($S \ge \text{threshold}$) and common keyword tokens. Clusters are titled using the top 2 dominant tokens.
+2. **AI Clustering (Claude Code `claude -p`)**: Unsupervised clustering via Claude CLI with structured JSON responses detailing cluster name, rationales, and assigned skills.
+3. **TypeSafe Jev Classification (System One Model)**: Categorical multi-class classification using Jev's `Choice` API (`typesafe-sdk`) into standardized domain buckets:
+   - `Agent Memory & State` (`memory_and_state`): Persistence, state snapshots, session history.
+   - `Code Quality & Engineering` (`code_and_review`): Code assistant, linting, refactoring.
+   - `Security & Auditing` (`security_and_audit`): Static security audit, credential leakage, network safety.
+   - `Data & Storage Sync` (`data_and_sync`): Cloud/local cache sync and file handling.
+   - `General Automation & Tools` (`general_automation`): Miscellaneous agent tooling and automation.

@@ -1,6 +1,9 @@
 """Console reporter formatting results using Rich."""
 
+from __future__ import annotations
+
 import re
+from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.markup import escape
@@ -8,6 +11,9 @@ from rich.rule import Rule as RichRule
 
 from skill_atlas.models import ScanResult, Severity
 from skill_atlas.similarity import SimilarSkillsResult
+
+if TYPE_CHECKING:
+    from skill_atlas.map import SkillMapResult
 
 ANSI_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -180,4 +186,39 @@ class ConsoleReporter:
         self.console.print(
             f"[bold]Summary:[/bold] Found {len(result.matches)} similar skill match(es) "
             f"across {result.total_skills} skills."
+        )
+
+    def render_skill_map(
+        self,
+        result: SkillMapResult,
+        target: str = ".",
+    ) -> None:
+        target_display = _sanitize(target)
+        if result.method == "ai":
+            method_badge = "[bold cyan]AI (Claude)[/bold cyan]"
+        elif result.method == "jev":
+            method_badge = "[bold magenta]AI (TypeSafe Jev)[/bold magenta]"
+        else:
+            method_badge = "[bold yellow]Heuristic (Shared Words)[/bold yellow]"
+
+        replayed_badge = " [dim](replayed)[/dim]" if result.replayed else ""
+        self.console.print(
+            f"[bold]🗺️  Skill Map for:[/bold] {target_display} "
+            f"— Method: {method_badge}{replayed_badge} [dim]({result.total_skills} skills, {len(result.clusters)} clusters)[/dim]\n"
+        )
+
+        for idx, cluster in enumerate(result.clusters, 1):
+            skills_count = len(cluster.skills)
+            self.console.print(
+                f"[bold cyan]{idx}. {cluster.name}[/bold cyan] "
+                f"[dim]({skills_count} skill{'s' if skills_count != 1 else ''})[/dim]"
+            )
+            self.console.print(f"   [dim]↳ Reason: {_sanitize(cluster.reason)}[/dim]")
+            skills_str = ", ".join(f"[bold]{_sanitize(s)}[/bold]" for s in cluster.skills)
+            self.console.print(f"   [dim]↳ Skills:[/dim] {skills_str}\n")
+
+        self.console.print(RichRule(style="dim"))
+        self.console.print(
+            f"[bold]Summary:[/bold] Grouped {result.total_skills} skill(s) into "
+            f"{len(result.clusters)} cluster(s)."
         )

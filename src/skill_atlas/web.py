@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 import webbrowser
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
@@ -164,6 +165,7 @@ HTML_CONTENT = """<!DOCTYPE html>
           <div id="summary-sub" style="font-size:0.85rem; color:var(--text-muted); margin-top:0.2rem;"></div>
         </div>
         <div style="display:flex; gap:0.5rem;">
+          <button id="map-btn" class="btn-secondary" onclick="toggleSkillMap()">Skill Map</button>
           <button id="similar-btn" class="btn-secondary" onclick="toggleSimilarSkills()">Find Similar</button>
           <button class="btn-secondary" onclick="downloadJson()">Download JSON</button>
         </div>
@@ -183,6 +185,27 @@ HTML_CONTENT = """<!DOCTYPE html>
           <option value="fail">Failed only</option>
         </select>
       </div>
+    </div>
+
+    <div id="map-section" style="display:none;" class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem; flex-wrap:wrap; gap:0.5rem;">
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+          <h3 style="font-size:1.05rem;">Skill Map</h3>
+          <span id="map-count" style="font-size:0.85rem; color:var(--text-muted);"></span>
+        </div>
+        <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem;">
+          <label style="color:var(--text-muted); display:flex; align-items:center; gap:0.3rem;">
+            Method:
+            <select id="map-method" style="padding:0.25rem 0.5rem; font-size:0.85rem;" onchange="loadSkillMap()">
+              <option value="heuristic">Heuristic (Shared Words)</option>
+              <option value="ai">AI Clustered (Claude)</option>
+              <option value="jev">TypeSafe Jev (System 1)</option>
+            </select>
+          </label>
+          <button class="btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.85rem;" onclick="closeSkillMap()" title="Close skill map">✕</button>
+        </div>
+      </div>
+      <div id="map-clusters-list" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem;"></div>
     </div>
 
     <div id="similar-section" style="display:none;" class="card">
@@ -636,6 +659,93 @@ HTML_CONTENT = """<!DOCTYPE html>
       document.body.appendChild(a);
       a.click();
       a.remove();
+    }
+
+    function closeSkillMap() {
+      document.getElementById('map-section').style.display = 'none';
+    }
+
+    async function toggleSkillMap() {
+      const section = document.getElementById('map-section');
+      if (section.style.display === 'block') {
+        section.style.display = 'none';
+        return;
+      }
+      await loadSkillMap();
+    }
+
+    async function loadSkillMap() {
+      if (!currentScanId) return;
+      const section = document.getElementById('map-section');
+      section.style.display = 'block';
+
+      const methodSelect = document.getElementById('map-method');
+      const method = methodSelect ? methodSelect.value : 'heuristic';
+
+      const list = document.getElementById('map-clusters-list');
+      list.innerHTML = '<div style="color:var(--text-muted); font-size:0.9rem; padding:0.5rem 0;">Generating skill map...</div>';
+
+      try {
+        const resp = await fetch(`/api/scans/${currentScanId}/map?method=${encodeURIComponent(method)}&replay=true`);
+        if (!resp.ok) throw new Error('Failed to generate skill map');
+        const data = await resp.json();
+
+        document.getElementById('map-count').textContent =
+          `${data.clusters.length} clusters · ${data.total_skills} skills (${data.method}${data.replayed ? ', replayed' : ''})`;
+
+        list.innerHTML = '';
+        if (!data.clusters || data.clusters.length === 0) {
+          list.innerHTML = '<div style="color:var(--text-muted); font-size:0.9rem; padding:0.75rem 0;">No clusters formed.</div>';
+          return;
+        }
+
+        for (const c of data.clusters) {
+          const card = document.createElement('div');
+          card.className = 'map-cluster-card';
+          card.style.cssText = 'border:1px solid var(--border); border-radius:0.375rem; padding:0.85rem; background:var(--card-bg); display:flex; flex-direction:column; justify-content:space-between;';
+
+          const topDiv = document.createElement('div');
+
+          const headerDiv = document.createElement('div');
+          headerDiv.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;';
+
+          const titleSpan = document.createElement('span');
+          titleSpan.style.cssText = 'font-weight:600; font-size:0.95rem; color:var(--text);';
+          titleSpan.textContent = c.name;
+
+          const countBadge = document.createElement('span');
+          countBadge.className = 'badge badge-primary';
+          countBadge.textContent = `${c.skills.length} skills`;
+
+          headerDiv.appendChild(titleSpan);
+          headerDiv.appendChild(countBadge);
+
+          const reasonDiv = document.createElement('div');
+          reasonDiv.style.cssText = 'color:var(--text-muted); font-size:0.825rem; margin-bottom:0.6rem; line-height:1.35;';
+          reasonDiv.textContent = c.reason;
+
+          topDiv.appendChild(headerDiv);
+          topDiv.appendChild(reasonDiv);
+
+          const skillsDiv = document.createElement('div');
+          skillsDiv.style.cssText = 'display:flex; flex-wrap:wrap; gap:0.35rem; margin-top:0.25rem;';
+
+          for (const sName of c.skills) {
+            const pill = document.createElement('span');
+            pill.style.cssText = 'background:rgba(59,130,246,0.1); color:var(--primary); border:1px solid rgba(59,130,246,0.25); border-radius:9999px; padding:0.15rem 0.5rem; font-size:0.75rem; font-weight:500; cursor:pointer; transition:background 0.15s;';
+            pill.textContent = sName;
+            pill.title = `Click to filter by ${sName}`;
+            pill.onclick = () => filterByKeyword(sName);
+            skillsDiv.appendChild(pill);
+          }
+
+          card.appendChild(topDiv);
+          card.appendChild(skillsDiv);
+          list.appendChild(card);
+        }
+      } catch (err) {
+        list.innerHTML = `<div style="color:var(--error); font-size:0.9rem;">${err.message}</div>`;
+      }
     }
 
     function closeSimilarSkills() {
@@ -1126,6 +1236,46 @@ def create_app(
                     target=job.request.target,
                 )
         return JSONResponse(content=sim_res.model_dump())
+
+    @app.get("/api/scans/{scan_id}/map")
+    def get_scan_skill_map(
+        scan_id: str,
+        method: str = "heuristic",
+        threshold: float = 0.35,
+        replay: bool = True,
+    ) -> Any:
+        job = manager.get_job(scan_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Scan not found")
+        if job.status != "completed" or not job.result:
+            raise HTTPException(status_code=400, detail="Scan is not completed")
+
+        skills = job.result.skills
+        if not job.request.include_test_data:
+            skills = [s for s in skills if s.origin != SkillOrigin.TEST_DATA]
+
+        method_clean = method.lower().strip()
+        if method_clean not in ("heuristic", "ai", "jev"):
+            raise HTTPException(
+                status_code=422, detail="method must be 'heuristic', 'ai', or 'jev'"
+            )
+
+        from skill_atlas.map import (
+            classify_skills_jev,
+            cluster_skills_ai,
+            group_skills_heuristic,
+        )
+
+        if method_clean == "jev":
+            replay_p = Path("tests/fixtures/recorded_jev_map_visual.json") if replay else None
+            map_res = classify_skills_jev(skills, replay_file=replay_p)
+        elif method_clean == "ai":
+            replay_p = Path("tests/fixtures/recorded_claude_map_visual.json") if replay else None
+            map_res = cluster_skills_ai(skills, replay_file=replay_p)
+        else:
+            map_res = group_skills_heuristic(skills, threshold=threshold)
+
+        return JSONResponse(content=map_res.model_dump())
 
     @app.delete("/api/scans/{scan_id}")
     def cancel_scan_endpoint(scan_id: str, request: Request) -> dict[str, str]:

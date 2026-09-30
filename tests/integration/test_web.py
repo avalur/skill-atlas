@@ -397,3 +397,74 @@ def test_web_similar_xss_protection():
     # The unsafe onclick attribute pattern must NOT be in the source HTML
     assert 'onclick="filterByKeyword(' not in resp.text
     assert "No GITHUB_TOKEN: limited to ~25 skills per hour" in resp.text
+
+
+def test_web_skill_map_ui_elements():
+    """Verify that the web interface includes the Skill Map button, container, and controls."""
+    app = create_app()
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'id="map-btn"' in resp.text
+    assert 'id="map-section"' in resp.text
+    assert 'id="map-method"' in resp.text
+    assert "toggleSkillMap" in resp.text
+    assert "loadSkillMap" in resp.text
+    assert "closeSkillMap" in resp.text
+
+
+def test_web_skill_map_endpoints(tmp_path: Path):
+    """Verify that /api/scans/{scan_id}/map supports heuristic, AI replay, and Jev replay."""
+    repo = make_repo(
+        tmp_path / "web_map_repo",
+        tree={
+            ".claude/skills/shared-memory/SKILL.md": (
+                "---\nname: shared-memory\ndescription: Maintains shared memory across sessions.\n"
+                "tags: [memory, state]\n---\n# Shared Memory\n"
+            ),
+            ".claude/skills/code-assistant/SKILL.md": (
+                "---\nname: code-assistant\ndescription: Provides code reviews and refactoring.\n"
+                "tags: [code, review]\n---\n# Code Assistant\n"
+            ),
+        },
+    )
+    app = create_app(allow_local=True)
+    client = TestClient(app)
+
+    resp = client.post("/api/scans", json={"target": str(repo)})
+    assert resp.status_code == 200
+    scan_id = resp.json()["scan_id"]
+
+    for _ in range(50):
+        res_poll = client.get(f"/api/scans/{scan_id}")
+        if res_poll.status_code == 200 and "skills" in res_poll.json():
+            break
+        time.sleep(0.05)
+
+    # 1. Heuristic map
+    h_resp = client.get(f"/api/scans/{scan_id}/map?method=heuristic")
+    assert h_resp.status_code == 200
+    h_data = h_resp.json()
+    assert h_data["method"] == "heuristic"
+    assert h_data["total_skills"] == 2
+    assert len(h_data["clusters"]) >= 1
+
+    # 2. AI map with replay
+    ai_resp = client.get(f"/api/scans/{scan_id}/map?method=ai&replay=true")
+    assert ai_resp.status_code == 200
+    ai_data = ai_resp.json()
+    assert ai_data["method"] == "ai"
+    assert ai_data["replayed"] is True
+    assert len(ai_data["clusters"]) >= 1
+
+    # 3. Jev map with replay
+    jev_resp = client.get(f"/api/scans/{scan_id}/map?method=jev&replay=true")
+    assert jev_resp.status_code == 200
+    jev_data = jev_resp.json()
+    assert jev_data["method"] == "jev"
+    assert jev_data["replayed"] is True
+    assert len(jev_data["clusters"]) >= 1
+
+    # 4. Invalid method
+    inv_resp = client.get(f"/api/scans/{scan_id}/map?method=invalid")
+    assert inv_resp.status_code == 422
