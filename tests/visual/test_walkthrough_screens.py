@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests.visual.conftest import stabilize_page_for_screenshot
+from tests.visual.failures import record_visual_failures
 from tests.visual.image_diff import VisualDiffResult, compare_images
 from tests.visual.report import generate_visual_report
 
@@ -129,6 +130,16 @@ def test_walkthrough_visual_regression(
         report_path=report_file,
         video_path=video_dest if video_dest.exists() else None,
         commit_sha=commit_sha,
+    )
+
+    # Record visual regression failures for CI reporting
+    failures_file = visual_paths.get("failures", visual_paths["artifacts"] / "failures.json")
+    record_visual_failures(
+        results=results,
+        failures_path=failures_file,
+        file_path="tests/visual/test_walkthrough_screens.py",
+        line_number=28,
+        title="test_walkthrough_visual_regression",
     )
 
     # Validate that all screens matched baselines

@@ -18,6 +18,7 @@ from playwright.sync_api import Browser, BrowserContext, Error, Page, sync_playw
 
 from skill_atlas.web import create_app
 from tests.conftest import CommitDef, make_repo
+from tests.visual.failures import clear_visual_failures, load_visual_failures
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -69,11 +70,14 @@ def visual_paths(commit_sha: str) -> dict[str, Path]:
     """Provide standard directories for visual testing artifacts and baselines."""
     actual_dir = ARTIFACTS_DIR / commit_sha
     diffs_dir = ARTIFACTS_DIR / "diffs"
+    failures_file = ARTIFACTS_DIR / "failures.json"
 
     BASELINES_DIR.mkdir(parents=True, exist_ok=True)
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     actual_dir.mkdir(parents=True, exist_ok=True)
     diffs_dir.mkdir(parents=True, exist_ok=True)
+
+    clear_visual_failures(failures_file)
 
     return {
         "baselines": BASELINES_DIR,
@@ -81,7 +85,38 @@ def visual_paths(commit_sha: str) -> dict[str, Path]:
         "recordings": RECORDINGS_DIR,
         "actual": actual_dir,
         "diffs": diffs_dir,
+        "failures": failures_file,
     }
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo
+) -> Generator[None, None, None]:
+    """Record any unexpected visual test failure into failures.json for CI reporting."""
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.when == "call" and rep.failed:
+        file_path = Path(item.location[0])
+        if "visual" in file_path.parts:
+            failures_file = ARTIFACTS_DIR / "failures.json"
+            current = load_visual_failures(failures_file)
+            title = item.name
+            if not any(entry.get("title") == title for entry in current):
+                err_msg = str(call.excinfo.value) if call.excinfo else rep.longreprtext
+                current.append(
+                    {
+                        "file": file_path.as_posix(),
+                        "line": item.location[1] + 1,
+                        "title": title,
+                        "errors": [err_msg],
+                        "snapshots": [],
+                    }
+                )
+                failures_file.parent.mkdir(parents=True, exist_ok=True)
+                import json
+
+                failures_file.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
 
 
 @pytest.fixture(scope="session")
