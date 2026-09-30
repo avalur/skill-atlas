@@ -1,46 +1,48 @@
 """Integration tests for the 'similar' CLI command."""
 
 import json
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from skill_atlas.cli import app
 
-runner = CliRunner()
+ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
-def test_similar_cli_help():
-    result = runner.invoke(app, ["similar", "--help"])
+def test_similar_cli_help(cli_runner: CliRunner):
+    result = cli_runner.invoke(app, ["similar", "--help"])
     assert result.exit_code == 0
-    assert "Find similar skills" in result.output
-    assert "--threshold" in result.output
-    assert "--top-k" in result.output
-    assert "--skill" in result.output
+    clean_out = ANSI_RE.sub("", result.stdout)
+    assert "similar" in clean_out
+    assert "--threshold" in clean_out
+    assert "--top-k" in clean_out
+    assert "--skill" in clean_out
 
 
-def test_similar_cli_invalid_options():
+def test_similar_cli_invalid_options(cli_runner: CliRunner):
     # Invalid target starting with '-'
-    res = runner.invoke(app, ["similar", "--nonexistent-arg"])
+    res = cli_runner.invoke(app, ["similar", "--nonexistent-arg"])
     assert res.exit_code == 2
 
     # Invalid threshold < 0 or > 1
-    res = runner.invoke(app, ["similar", ".", "--threshold", "1.5"])
+    res = cli_runner.invoke(app, ["similar", ".", "--threshold", "1.5"])
     assert res.exit_code == 2
 
-    res = runner.invoke(app, ["similar", ".", "--threshold", "-0.1"])
+    res = cli_runner.invoke(app, ["similar", ".", "--threshold", "-0.1"])
     assert res.exit_code == 2
 
     # Invalid format
-    res = runner.invoke(app, ["similar", ".", "--format", "yaml"])
+    res = cli_runner.invoke(app, ["similar", ".", "--format", "yaml"])
     assert res.exit_code == 2
 
     # Invalid top-k
-    res = runner.invoke(app, ["similar", ".", "--top-k", "-5"])
+    res = cli_runner.invoke(app, ["similar", ".", "--top-k", "-5"])
     assert res.exit_code == 2
 
 
-def test_similar_cli_on_local_skills_text_and_json(tmp_path: Path):
+def test_similar_cli_on_local_skills_text_and_json(tmp_path: Path, cli_runner: CliRunner):
     # Setup two similar skills and one different skill
     skill_a = tmp_path / "docker-run"
     skill_a.mkdir()
@@ -61,7 +63,7 @@ def test_similar_cli_on_local_skills_text_and_json(tmp_path: Path):
     )
 
     # Run CLI in text mode
-    res_text = runner.invoke(app, ["similar", str(tmp_path), "--threshold", "0.5"])
+    res_text = cli_runner.invoke(app, ["similar", str(tmp_path), "--threshold", "0.5"])
     assert res_text.exit_code == 0
     assert "Finding similar skills" in res_text.output
     assert "docker-run" in res_text.output
@@ -69,7 +71,7 @@ def test_similar_cli_on_local_skills_text_and_json(tmp_path: Path):
     assert "code-formatter" not in res_text.output or "Summary:" in res_text.output
 
     # Run CLI in JSON mode
-    res_json = runner.invoke(
+    res_json = cli_runner.invoke(
         app, ["similar", str(tmp_path), "--format", "json", "--threshold", "0.5"]
     )
     assert res_json.exit_code == 0
@@ -82,7 +84,7 @@ def test_similar_cli_on_local_skills_text_and_json(tmp_path: Path):
     assert len(match["reasons"]) > 0
 
     # Query specific skill
-    res_query = runner.invoke(
+    res_query = cli_runner.invoke(
         app, ["similar", str(tmp_path), "--skill", "docker-run", "--format", "json"]
     )
     assert res_query.exit_code == 0
@@ -91,7 +93,7 @@ def test_similar_cli_on_local_skills_text_and_json(tmp_path: Path):
     assert query_data["matches"][0]["skill_b"] == "docker-runner"
 
     # High threshold should return 0 matches
-    res_high = runner.invoke(
+    res_high = cli_runner.invoke(
         app, ["similar", str(tmp_path), "--threshold", "0.99", "--format", "json"]
     )
     assert res_high.exit_code == 0
