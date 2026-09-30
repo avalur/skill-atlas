@@ -1,8 +1,12 @@
 """GitHub REST API and raw content client for remote repository scanning."""
 
 import os
+import re
+import urllib.parse
 
 import httpx
+
+from skill_atlas import __version__
 
 
 class GitHubClient:
@@ -16,7 +20,7 @@ class GitHubClient:
     def _get_headers(self, with_auth: bool = True) -> dict[str, str]:
         headers = {
             "Accept": "application/vnd.github+json",
-            "User-Agent": "SkillAtlas-Scanner/0.1.0",
+            "User-Agent": f"SkillAtlas-Scanner/{__version__}",
         }
         if with_auth and self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -56,20 +60,45 @@ class GitHubClient:
     def fetch_file_content(
         self, client: httpx.Client, owner: str, repo: str, branch: str, file_path: str
     ) -> str | None:
-        """Download raw file content without API rate limit consumption."""
-        url = f"{self.raw_base}/{owner}/{repo}/{branch}/{file_path}"
-        resp = client.get(url, headers={"User-Agent": "SkillAtlas-Scanner/0.1.0"})
+        """Download raw file content with auth headers if token is present."""
+        quoted_path = urllib.parse.quote(file_path.lstrip("/"))
+        url = f"{self.raw_base}/{owner}/{repo}/{branch}/{quoted_path}"
+        headers = {"User-Agent": f"SkillAtlas-Scanner/{__version__}"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+
+        resp = client.get(url, headers=headers)
         if resp.status_code == 200:
             return resp.text
+
+        # Fallback to contents API with raw Accept header
+        api_url = f"{self.api_base}/repos/{owner}/{repo}/contents/{quoted_path}?ref={branch}"
+        api_headers = self._get_headers(with_auth=True)
+        api_headers["Accept"] = "application/vnd.github.raw"
+        resp_api = client.get(api_url, headers=api_headers)
+        if resp_api.status_code == 200:
+            return resp_api.text
+
         return None
 
     def fetch_file_provenance(
         self, client: httpx.Client, owner: str, repo: str, file_path: str
     ) -> tuple[str | None, str | None]:
-        """Fetch introductory commit SHA and date using commits API."""
-        url = f"{self.api_base}/repos/{owner}/{repo}/commits?path={file_path}"
+        """Fetch introductory commit SHA and date using commits API (oldest first)."""
+        quoted_path = urllib.parse.quote(file_path.lstrip("/"))
+        url = f"{self.api_base}/repos/{owner}/{repo}/commits?path={quoted_path}&per_page=100"
         resp = self._request(client, url)
         if resp.status_code == 200:
+            link_header = resp.headers.get("Link", "")
+            # If multiple pages, jump to last page
+            if 'rel="last"' in link_header:
+                match = re.search(r'<([^>]+)>;\s*rel="last"', link_header)
+                if match:
+                    last_url = match.group(1)
+                    resp_last = self._request(client, last_url)
+                    if resp_last.status_code == 200:
+                        resp = resp_last
+
             commits = resp.json()
             if isinstance(commits, list) and len(commits) > 0:
                 oldest_commit = commits[-1]

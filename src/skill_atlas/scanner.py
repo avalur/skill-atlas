@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from skill_atlas import __version__
 from skill_atlas.discovery.local import discover_local_skills
 from skill_atlas.discovery.remote import discover_remote_skills, is_remote_target
 from skill_atlas.models import ScanResult, ScanSummary, Severity
@@ -15,10 +16,12 @@ class Scanner:
         self,
         rules_category: str = "all",
         ignored_rules: list[str] | None = None,
+        fail_on: str = "error",
         registry: RuleRegistry | None = None,
     ) -> None:
         self.rules_category = rules_category.lower()
         self.ignored_rules = ignored_rules or []
+        self.fail_on = fail_on.lower().strip()
         self.registry = registry or create_default_registry()
 
     def scan(self, target: str | Path) -> ScanResult:
@@ -52,9 +55,9 @@ class Scanner:
                 elif f.severity == Severity.INFO:
                     info_count += 1
 
-        # 3. Calculate summary metrics
+        # 3. Calculate summary metrics based on fail_on threshold
         total = len(skills)
-        passed = sum(1 for s in skills if s.valid)
+        passed = sum(1 for s in skills if s.is_passing(self.fail_on))
         failed = total - passed
 
         summary = ScanSummary(
@@ -69,7 +72,7 @@ class Scanner:
         )
 
         return ScanResult(
-            version="0.1.0",
+            version=__version__,
             target=target_str,
             summary=summary,
             skills=skills,

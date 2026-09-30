@@ -1,20 +1,26 @@
 """Markdown and YAML frontmatter parser for SKILL.md files."""
 
 import re
+import urllib.parse
 from typing import Any
 
 import frontmatter
 
 
 def extract_referenced_files(markdown_body: str) -> list[str]:
-    """Extract local file paths referenced in Markdown links."""
+    """Extract local file paths referenced in Markdown links, ignoring code blocks."""
+    # Strip fenced code blocks
+    cleaned = re.sub(r"(?s)```.*?```", "", markdown_body)
+    # Strip inline code blocks
+    cleaned = re.sub(r"`[^`\n]+`", "", cleaned)
+
     # Matches markdown links: [link text](target_path)
     link_pattern = re.compile(r"\[.*?\]\((.*?)\)")
-    matches = link_pattern.findall(markdown_body)
+    matches = link_pattern.findall(cleaned)
     local_paths: list[str] = []
 
     for target in matches:
-        target = target.strip()
+        target = target.strip().strip("<>")
         # Remove quotes or titles in markdown links e.g. (path "title")
         if " " in target:
             target = target.split(" ", 1)[0].strip()
@@ -23,10 +29,17 @@ def extract_referenced_files(markdown_body: str) -> list[str]:
         if "#" in target:
             target = target.split("#", 1)[0].strip()
 
-        # Exclude web URLs, mailto, empty targets
+        # Remove query parameters ?key=value
+        if "?" in target:
+            target = target.split("?", 1)[0].strip()
+
+        # Unquote URL-encoded characters (e.g. %20 -> space)
+        target = urllib.parse.unquote(target)
+
+        # Exclude web URLs, mailto, empty targets, data/file URIs
         if not target:
             continue
-        if target.startswith(("http://", "https://", "mailto:", "ftp://", "//")):
+        if target.startswith(("http://", "https://", "mailto:", "ftp://", "file:", "data:", "//")):
             continue
 
         local_paths.append(target)

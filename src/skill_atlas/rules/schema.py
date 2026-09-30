@@ -24,7 +24,7 @@ class MissingManifestRule(Rule):
                     rule_id=self.id,
                     severity=self.severity,
                     message="SKILL.md manifest is missing or could not be loaded",
-                    file=f"{skill.path}/SKILL.md",
+                    file="SKILL.md",
                     suggestion="Create a valid SKILL.md file with YAML frontmatter in the skill directory",
                 )
             ]
@@ -64,6 +64,10 @@ class MissingRequiredFieldRule(Rule):
     description = "Missing required frontmatter field ('name' or 'description')"
 
     def check(self, skill: Skill) -> list[Finding]:
+        # Do not report missing fields if file is missing or frontmatter cannot be parsed
+        if skill.raw_content is None or skill.parse_error:
+            return []
+
         findings: list[Finding] = []
         name = skill.frontmatter.get("name")
         if not name or not str(name).strip():
@@ -103,12 +107,14 @@ class InvalidNameFormatRule(Rule):
     _PATTERN = re.compile(r"^[a-z0-9_-]+$")
 
     def check(self, skill: Skill) -> list[Finding]:
-        if skill.name and not self._PATTERN.match(skill.name):
+        # Only validate name if it was explicitly provided in frontmatter
+        name = skill.frontmatter.get("name")
+        if name and isinstance(name, str) and not self._PATTERN.match(name.strip()):
             return [
                 Finding(
                     rule_id=self.id,
                     severity=self.severity,
-                    message=f"Skill name '{skill.name}' does not match recommended pattern '^[a-z0-9_-]+$'",
+                    message=f"Skill name '{name}' does not match recommended pattern '^[a-z0-9_-]+$'",
                     file="SKILL.md",
                     suggestion="Rename skill to use only lowercase alphanumeric characters, hyphens, and underscores",
                 )

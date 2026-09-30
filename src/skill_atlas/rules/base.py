@@ -51,9 +51,20 @@ class RuleRegistry:
         active_rules = self.get_rules(category=category, ignored_ids=ignored_ids)
 
         for rule in active_rules:
-            detected = rule.check(skill)
-            for f in detected:
-                skill.add_finding(f)
-                findings.append(f)
+            try:
+                detected = rule.check(skill)
+                for f in detected:
+                    skill.add_finding(f)
+                    findings.append(f)
+            except Exception as err:
+                internal_finding = Finding(
+                    rule_id=rule.id,
+                    severity=Severity.ERROR,
+                    message=f"Internal rule error: {err}",
+                    file="SKILL.md",
+                    suggestion="Check rule implementation or report issue",
+                )
+                skill.add_finding(internal_finding)
+                findings.append(internal_finding)
 
         return findings

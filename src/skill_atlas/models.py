@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from skill_atlas import __version__
+
 
 class Severity(str, Enum):
     ERROR = "ERROR"
@@ -16,7 +18,7 @@ class Finding(BaseModel):
     rule_id: str
     severity: Severity
     message: str
-    file: str | None = None
+    file: str = "SKILL.md"
     line: int | None = None
     suggestion: str | None = None
 
@@ -35,21 +37,29 @@ class Skill(BaseModel):
     valid: bool = True
     findings: list[Finding] = Field(default_factory=list)
 
-    # Runtime analysis helpers (excluded from final serialization if desired)
-    raw_content: str | None = Field(default=None, repr=False)
-    frontmatter: dict[str, Any] = Field(default_factory=dict, repr=False)
-    markdown_body: str = Field(default="", repr=False)
-    referenced_files: list[str] = Field(default_factory=list, repr=False)
-    available_files: list[str] = Field(default_factory=list, repr=False)
-    repo_files: list[str] = Field(default_factory=list, repr=False)
-    base_dir: str | None = Field(default=None, repr=False)
-    repo_root_dir: str | None = Field(default=None, repr=False)
-    parse_error: str | None = Field(default=None, repr=False)
+    # Runtime analysis helpers (excluded from serialization)
+    raw_content: str | None = Field(default=None, repr=False, exclude=True)
+    frontmatter: dict[str, Any] = Field(default_factory=dict, repr=False, exclude=True)
+    markdown_body: str = Field(default="", repr=False, exclude=True)
+    referenced_files: list[str] = Field(default_factory=list, repr=False, exclude=True)
+    available_files: list[str] = Field(default_factory=list, repr=False, exclude=True)
+    companion_contents: dict[str, str] = Field(default_factory=dict, repr=False, exclude=True)
+    repo_files: list[str] = Field(default_factory=list, repr=False, exclude=True)
+    base_dir: str | None = Field(default=None, repr=False, exclude=True)
+    repo_root_dir: str | None = Field(default=None, repr=False, exclude=True)
+    parse_error: str | None = Field(default=None, repr=False, exclude=True)
 
     def add_finding(self, finding: Finding) -> None:
         self.findings.append(finding)
         if finding.severity == Severity.ERROR:
             self.valid = False
+
+    def is_passing(self, fail_on: str = "error") -> bool:
+        """Check whether the skill passes the given fail-on severity threshold."""
+        threshold = fail_on.lower().strip()
+        if threshold == "warn":
+            return not any(f.severity in (Severity.ERROR, Severity.WARN) for f in self.findings)
+        return not any(f.severity == Severity.ERROR for f in self.findings)
 
 
 class ScanSummary(BaseModel):
@@ -62,7 +72,15 @@ class ScanSummary(BaseModel):
 
 
 class ScanResult(BaseModel):
-    version: str = "0.1.0"
+    version: str = Field(default=__version__)
     target: str
     summary: ScanSummary
     skills: list[Skill]
+
+    def has_failures(self, fail_on: str = "error") -> bool:
+        """Check if any skill failed the threshold or if there are blocking findings."""
+        return any(not s.is_passing(fail_on) for s in self.skills)
+
+    def exit_code(self, fail_on: str = "error") -> int:
+        """Return the standard CLI exit code based on findings."""
+        return 1 if self.has_failures(fail_on) else 0

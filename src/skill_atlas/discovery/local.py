@@ -21,20 +21,45 @@ IGNORED_DIRS = {
 }
 
 
-def _collect_skill_files(skill_dir: Path) -> list[str]:
-    """Collect all files inside skill directory relative to skill directory root."""
+def _collect_skill_files(skill_dir: Path) -> tuple[list[str], dict[str, str]]:
+    """Collect companion file paths and text contents inside skill directory."""
     files: list[str] = []
+    contents: dict[str, str] = {}
+    resolved_skill_dir = skill_dir.resolve()
+
     for root, dirs, filenames in os.walk(skill_dir):
         # Prune ignored dirs
         dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
         for f in filenames:
             abs_f = Path(root) / f
+            # Check symlink destination
+            if abs_f.is_symlink():
+                try:
+                    resolved_target = abs_f.resolve()
+                    if not resolved_target.is_relative_to(resolved_skill_dir):
+                        continue
+                except Exception:
+                    continue
+
             try:
-                rel_path = abs_f.relative_to(skill_dir)
-                files.append(str(rel_path))
+                rel_path = str(abs_f.relative_to(skill_dir))
+                files.append(rel_path)
             except ValueError:
+                continue
+
+            # Read text files if under 1MB and non-binary
+            try:
+                st = abs_f.stat()
+                if st.st_size <= 1_048_576:  # 1 MB
+                    with open(abs_f, "rb") as bf:
+                        chunk = bf.read(8192)
+                        if b"\x00" not in chunk:
+                            bf.seek(0)
+                            contents[rel_path] = bf.read().decode("utf-8", errors="replace")
+            except Exception:
                 pass
-    return files
+
+    return files, contents
 
 
 def _collect_git_repo_files(repo_root: Path) -> list[str]:
@@ -46,6 +71,8 @@ def _collect_git_repo_files(repo_root: Path) -> list[str]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=15,
+            env={"GIT_TERMINAL_PROMPT": "0", **os.environ},
             check=False,
         )
         if res.returncode == 0:
@@ -61,7 +88,7 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
     target = target_path.resolve()
 
     if not target.exists():
-        return []
+        raise FileNotFoundError(f"Target path does not exist: {target_path}")
 
     # Check git repo context
     in_git = is_git_repository(target)
@@ -69,23 +96,20 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
     repo_files = _collect_git_repo_files(repo_root) if repo_root else []
 
     manifest_paths: list[Path] = []
+    seen_manifests: set[Path] = set()
 
     if target.is_file():
         if target.name.lower() == "skill.md":
             manifest_paths.append(target)
     else:
-        # Check if target directory itself directly contains SKILL.md
-        direct_manifest = target / "SKILL.md"
-        if direct_manifest.is_file():
-            manifest_paths.append(direct_manifest)
-
         # Recursively search for subdirectories containing SKILL.md
         for root, dirs, files in os.walk(target):
             dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
             for file in files:
                 if file.lower() == "skill.md":
-                    p = Path(root) / file
-                    if p not in manifest_paths:
+                    p = (Path(root) / file).resolve()
+                    if p not in seen_manifests:
+                        seen_manifests.add(p)
                         manifest_paths.append(p)
 
     # Process each discovered manifest
@@ -135,7 +159,9 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
         if repo_root:
             commit_sha, commit_date = get_file_provenance(repo_root, manifest_rel_path)
 
-        available_files = _collect_skill_files(skill_dir)
+        available_files, companion_contents = _collect_skill_files(skill_dir)
+        if raw_content is not None:
+            companion_contents["SKILL.md"] = raw_content
 
         skill = Skill(
             name=parse_info["name"],
@@ -153,6 +179,7 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
             markdown_body=parse_info.get("markdown_body", ""),
             referenced_files=parse_info.get("referenced_files", []),
             available_files=available_files,
+            companion_contents=companion_contents,
             repo_files=repo_files,
             base_dir=str(skill_dir),
             repo_root_dir=str(repo_root) if repo_root else None,

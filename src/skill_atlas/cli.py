@@ -90,6 +90,15 @@ def scan_command(
 ) -> None:
     """Scan skills for structural consistency and security vulnerabilities."""
     # Validate options
+    target_clean = target.strip()
+    if target_clean.startswith("-"):
+        typer.secho(
+            f"Error: Invalid target '{target}'. Target cannot start with '-'.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
     format_clean = format.lower().strip()
     if format_clean not in ("text", "json"):
         typer.secho(
@@ -121,32 +130,25 @@ def scan_command(
         scanner = Scanner(
             rules_category=rules_clean,
             ignored_rules=ignore or [],
+            fail_on=fail_on_clean,
         )
         result: ScanResult = scanner.scan(target)
+
+        # Output rendering
+        if format_clean == "json":
+            json_reporter = JsonReporter()
+            typer.echo(json_reporter.render(result))
+        else:
+            console_reporter = ConsoleReporter()
+            console_reporter.render(result, fail_on=fail_on_clean, verbose=verbose)
+
+        raise typer.Exit(code=result.exit_code(fail_on=fail_on_clean))
+
+    except typer.Exit:
+        raise
     except Exception as err:
-        typer.secho(f"Fatal scanning error: {err}", fg=typer.colors.RED, err=True)
+        typer.secho(f"Fatal error: {err}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2)
-
-    # Output rendering
-    if format_clean == "json":
-        json_reporter = JsonReporter()
-        typer.echo(json_reporter.render(result))
-    else:
-        console_reporter = ConsoleReporter()
-        console_reporter.render(result, fail_on=fail_on_clean)
-
-    # Determine exit code
-    errors = result.summary.findings_count.get("error", 0)
-    warnings = result.summary.findings_count.get("warn", 0)
-
-    if fail_on_clean == "error":
-        has_failed = errors > 0
-    else:  # fail_on == "warn"
-        has_failed = (errors + warnings) > 0
-
-    if has_failed:
-        raise typer.Exit(code=1)
-    raise typer.Exit(code=0)
 
 
 if __name__ == "__main__":

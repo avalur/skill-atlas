@@ -8,16 +8,40 @@ from pathlib import Path
 import httpx
 
 from skill_atlas.discovery.local import discover_local_skills
-from skill_atlas.git.client import parse_github_url
+from skill_atlas.git.client import GIT_ENV, parse_github_url
 from skill_atlas.git.github import GitHubClient
 from skill_atlas.models import Skill
 from skill_atlas.parsers.markdown import parse_skill_markdown
+
+TEXT_EXTENSIONS = {
+    ".sh",
+    ".bash",
+    ".py",
+    ".js",
+    ".ts",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".txt",
+    ".md",
+    ".env",
+    ".cfg",
+    ".ini",
+    ".toml",
+}
 
 
 def is_remote_target(target: str) -> bool:
     """Check if target string represents a remote Git URL."""
     cleaned = target.strip()
-    return cleaned.startswith(("http://", "https://", "git@", "ssh://")) or cleaned.endswith(".git")
+    if cleaned.startswith("-"):
+        return False
+    if cleaned.startswith(("http://", "https://", "git@", "ssh://")):
+        return True
+    if cleaned.endswith(".git"):
+        if "://" in cleaned or "@" in cleaned or not Path(cleaned).exists():
+            return True
+    return False
 
 
 def _discover_via_github_api(owner: str, repo: str, original_url: str) -> list[Skill]:
@@ -66,6 +90,20 @@ def _discover_via_github_api(owner: str, repo: str, original_url: str) -> list[S
                 http_client, owner, repo, manifest_path
             )
 
+            # Fetch companion text files (e.g. scripts/run.sh) for security checks
+            companion_contents: dict[str, str] = {}
+            if raw_content is not None:
+                companion_contents["SKILL.md"] = raw_content
+
+            for rel_f in available_files:
+                if rel_f != "SKILL.md" and Path(rel_f).suffix.lower() in TEXT_EXTENSIONS:
+                    full_repo_path = f"{skill_dir}/{rel_f}" if skill_dir != "." else rel_f
+                    f_content = gh_client.fetch_file_content(
+                        http_client, owner, repo, active_branch, full_repo_path
+                    )
+                    if f_content is not None:
+                        companion_contents[rel_f] = f_content
+
             if raw_content is not None:
                 parse_info = parse_skill_markdown(raw_content, fallback_name=fallback_name)
             else:
@@ -97,6 +135,7 @@ def _discover_via_github_api(owner: str, repo: str, original_url: str) -> list[S
                 markdown_body=parse_info.get("markdown_body", ""),
                 referenced_files=parse_info.get("referenced_files", []),
                 available_files=available_files,
+                companion_contents=companion_contents,
                 repo_files=all_paths,
                 parse_error=parse_info.get("parse_error"),
             )
@@ -106,10 +145,13 @@ def _discover_via_github_api(owner: str, repo: str, original_url: str) -> list[S
 
 
 def _discover_via_git_clone(url: str) -> list[Skill]:
-    """Lightweight discovery using blobless shallow clone with no checkout."""
+    """Lightweight discovery using blobless clone with no checkout."""
+    if url.startswith("-"):
+        raise ValueError(f"Invalid target URL: '{url}'")
+
     tmp_dir = tempfile.mkdtemp(prefix="skill_atlas_clone_")
     try:
-        # 1. Shallow blobless clone without checking out files (downloads only ~5MB for Kotlin)
+        # 1. Blobless shallow clone without checkout (downloads only ~5MB)
         clone_cmd = [
             "git",
             "clone",
@@ -117,6 +159,7 @@ def _discover_via_git_clone(url: str) -> list[Skill]:
             "1",
             "--filter=blob:none",
             "--no-checkout",
+            "--",
             url,
             tmp_dir,
         ]
@@ -125,17 +168,38 @@ def _discover_via_git_clone(url: str) -> list[Skill]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=60,
+            env=GIT_ENV,
             check=False,
         )
         if clone_res.returncode != 0:
             # Fallback if blob filter is not supported by Git server
-            subprocess.run(
-                ["git", "clone", "--depth", "1", "--no-checkout", url, tmp_dir],
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            Path(tmp_dir).mkdir(parents=True, exist_ok=True)
+            fallback_cmd = [
+                "git",
+                "clone",
+                "--no-checkout",
+                "--",
+                url,
+                tmp_dir,
+            ]
+            fallback_res = subprocess.run(
+                fallback_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                timeout=60,
+                env=GIT_ENV,
                 check=False,
             )
+            if fallback_res.returncode != 0:
+                err_msg = (
+                    fallback_res.stderr.strip()
+                    or clone_res.stderr.strip()
+                    or "Failed to clone repository"
+                )
+                raise RuntimeError(f"Git clone failed: {err_msg}")
 
         # 2. Inspect tree directly without checking out files
         tree_res = subprocess.run(
@@ -144,6 +208,8 @@ def _discover_via_git_clone(url: str) -> list[Skill]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=15,
+            env=GIT_ENV,
             check=False,
         )
         all_tree_files = [line.strip() for line in tree_res.stdout.splitlines() if line.strip()]
@@ -167,6 +233,8 @@ def _discover_via_git_clone(url: str) -> list[Skill]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=30,
+            env=GIT_ENV,
             check=False,
         )
 

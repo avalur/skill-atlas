@@ -1,8 +1,11 @@
 """Local Git client for repository metadata and commit provenance."""
 
+import os
 import re
 import subprocess
 from pathlib import Path
+
+GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", **os.environ}
 
 
 def parse_github_url(url: str) -> tuple[str, str] | None:
@@ -26,6 +29,8 @@ def is_git_repository(path: Path) -> bool:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=15,
+            env=GIT_ENV,
             check=False,
         )
         return res.returncode == 0 and res.stdout.strip() == "true"
@@ -44,6 +49,8 @@ def get_repo_info(path: Path) -> tuple[Path | None, str | None, str | None]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=15,
+            env=GIT_ENV,
             check=False,
         )
         if root_res.returncode != 0:
@@ -58,6 +65,8 @@ def get_repo_info(path: Path) -> tuple[Path | None, str | None, str | None]:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=15,
+            env=GIT_ENV,
             check=False,
         )
         repo_url = (
@@ -83,15 +92,14 @@ def get_repo_info(path: Path) -> tuple[Path | None, str | None, str | None]:
 def get_file_provenance(repo_root: Path, file_rel_path: str) -> tuple[str | None, str | None]:
     """Retrieve the introductory commit hash and author ISO date for a file."""
     try:
-        # Primary lookup: introductory commit where file was added
+        # Primary lookup: introductory commit where file was first added (oldest first)
         res = subprocess.run(
             [
                 "git",
                 "log",
+                "--reverse",
                 "--diff-filter=A",
-                "--follow",
                 "--format=%H %aI",
-                "-1",
                 "--",
                 file_rel_path,
             ],
@@ -99,21 +107,36 @@ def get_file_provenance(repo_root: Path, file_rel_path: str) -> tuple[str | None
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=30,
+            env=GIT_ENV,
             check=False,
         )
-        output = res.stdout.strip()
+        lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+        output = lines[0] if lines else ""
 
-        # Fallback if diff-filter=A didn't match (e.g. initial root commit or renamed without record)
+        # Fallback if diff-filter=A didn't match (e.g. initial root commit)
         if not output:
             res_fallback = subprocess.run(
-                ["git", "log", "--follow", "--format=%H %aI", "-1", "--", file_rel_path],
+                [
+                    "git",
+                    "log",
+                    "--reverse",
+                    "--format=%H %aI",
+                    "--",
+                    file_rel_path,
+                ],
                 cwd=str(repo_root),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                timeout=30,
+                env=GIT_ENV,
                 check=False,
             )
-            output = res_fallback.stdout.strip()
+            fallback_lines = [
+                line.strip() for line in res_fallback.stdout.splitlines() if line.strip()
+            ]
+            output = fallback_lines[0] if fallback_lines else ""
 
         if output:
             parts = output.split(" ", 1)
