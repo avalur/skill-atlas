@@ -20,9 +20,11 @@ from skill_atlas.git.github import GitHubClient
 from skill_atlas.models import (
     ProgressEvent,
     ScanResult,
+    SkillOrigin,
     Stage,
 )
 from skill_atlas.scanner import Scanner
+from skill_atlas.similarity import find_similar_skills
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="en">
@@ -137,7 +139,10 @@ HTML_CONTENT = """<!DOCTYPE html>
           <h2 id="summary-headline" style="font-size:1.15rem;">Scan Summary</h2>
           <div id="summary-sub" style="font-size:0.85rem; color:var(--text-muted); margin-top:0.2rem;"></div>
         </div>
-        <button class="btn-secondary" onclick="downloadJson()">Download JSON</button>
+        <div style="display:flex; gap:0.5rem;">
+          <button id="similar-btn" class="btn-secondary" onclick="toggleSimilarSkills()">Find Similar</button>
+          <button class="btn-secondary" onclick="downloadJson()">Download JSON</button>
+        </div>
       </div>
       <div class="filter-chips">
         <div class="chip active" onclick="setOriginFilter('all')">All (<span id="count-all">0</span>)</div>
@@ -146,6 +151,14 @@ HTML_CONTENT = """<!DOCTYPE html>
         <div class="chip" onclick="setOriginFilter('standalone')">Standalone (<span id="count-standalone">0</span>)</div>
         <div class="chip" onclick="setOriginFilter('test-data')">Test Data (<span id="count-test-data">0</span>)</div>
       </div>
+    </div>
+
+    <div id="similar-section" style="display:none;" class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem;">
+        <h3 style="font-size:1.05rem;">Similar Skills</h3>
+        <span id="similar-count" style="font-size:0.85rem; color:var(--text-muted);"></span>
+      </div>
+      <div id="similar-list"></div>
     </div>
 
     <div id="skills-list"></div>
@@ -452,6 +465,60 @@ HTML_CONTENT = """<!DOCTYPE html>
       a.click();
       a.remove();
     }
+
+    async function toggleSimilarSkills() {
+      const section = document.getElementById('similar-section');
+      if (section.style.display === 'block') {
+        section.style.display = 'none';
+        return;
+      }
+      if (!currentScanId) return;
+      section.style.display = 'block';
+      const list = document.getElementById('similar-list');
+      list.innerHTML = '<div style="color:var(--text-muted); font-size:0.9rem;">Finding similar skills...</div>';
+
+      try {
+        const resp = await fetch(`/api/scans/${currentScanId}/similar`);
+        if (!resp.ok) throw new Error('Failed to compute similarity');
+        const data = await resp.json();
+        document.getElementById('similar-count').textContent = `${data.matches.length} matches (threshold >= ${data.threshold})`;
+
+        if (data.matches.length === 0) {
+          list.innerHTML = '<div style="color:var(--text-muted); font-size:0.9rem; padding:0.5rem 0;">No similar skills found exceeding the threshold.</div>';
+          return;
+        }
+
+        list.innerHTML = '';
+        for (const m of data.matches) {
+          const mDiv = document.createElement('div');
+          mDiv.style.border = '1px solid var(--border)';
+          mDiv.style.borderRadius = '0.375rem';
+          mDiv.style.padding = '0.75rem';
+          mDiv.style.marginBottom = '0.5rem';
+          mDiv.style.background = 'var(--card-bg)';
+
+          const pct = Math.round(m.score * 100);
+          const badgeClass = pct >= 80 ? 'badge-success' : (pct >= 60 ? 'badge-warn' : 'badge-primary');
+
+          mDiv.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
+              <div style="font-weight:600; font-size:0.95rem;">${escapeHtml(m.skill_a)} ↔ ${escapeHtml(m.skill_b)}</div>
+              <span class="badge ${badgeClass}">${pct}% match</span>
+            </div>
+            <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.4rem;">
+              <div>• ${escapeHtml(m.skill_a)}: ${escapeHtml(m.skill_a_path)}</div>
+              <div>• ${escapeHtml(m.skill_b)}: ${escapeHtml(m.skill_b_path)}</div>
+            </div>
+            <div style="font-size:0.85rem;">
+              ${m.reasons.map(r => `<div style="color:var(--text); margin-top:0.2rem;">↳ ${escapeHtml(r)}</div>`).join('')}
+            </div>
+          `;
+          list.appendChild(mDiv);
+        }
+      } catch (err) {
+        list.innerHTML = `<div style="color:var(--error); font-size:0.9rem;">Error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
   </script>
 </body>
 </html>
@@ -706,6 +773,32 @@ def create_app(
             raise HTTPException(status_code=400, detail="Scan was cancelled")
 
         return {"status": job.status, "message": "Scan in progress"}
+
+    @app.get("/api/scans/{scan_id}/similar")
+    def get_scan_similar_skills(
+        scan_id: str,
+        threshold: float = 0.5,
+        skill: str | None = None,
+        top_k: int = 10,
+    ) -> Any:
+        job = manager.get_job(scan_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Scan not found")
+        if job.status != "completed" or not job.result:
+            raise HTTPException(status_code=400, detail="Scan is not completed")
+
+        skills = job.result.skills
+        if not job.request.include_test_data:
+            skills = [s for s in skills if s.origin != SkillOrigin.TEST_DATA]
+
+        sim_res = find_similar_skills(
+            skills=skills,
+            query_skill=skill,
+            threshold=threshold,
+            top_k=top_k,
+            target=job.request.target,
+        )
+        return JSONResponse(content=sim_res.model_dump())
 
     @app.delete("/api/scans/{scan_id}")
     def cancel_scan_endpoint(scan_id: str, request: Request) -> dict[str, str]:

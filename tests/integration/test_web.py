@@ -251,3 +251,37 @@ def test_web_per_request_scanner_options(tmp_path: Path):
             assert "SCH-005" not in rule_ids
             break
         time.sleep(0.05)
+
+
+def test_web_similar_skills_endpoint(tmp_path: Path):
+    """Verify that /api/scans/{scan_id}/similar computes and returns similar skills."""
+    repo = make_repo(
+        tmp_path / "web_similar",
+        tree={
+            ".claude/skills/docker-run/SKILL.md": (
+                "---\nname: docker-run\ndescription: Run and manage Docker containers.\ntags:\n  - docker\n---\n"
+            ),
+            ".claude/skills/docker-runner/SKILL.md": (
+                "---\nname: docker-runner\ndescription: Execute tasks inside Docker containers.\ntags:\n  - docker\n---\n"
+            ),
+        },
+    )
+    app = create_app(allow_local=True)
+    client = TestClient(app)
+
+    resp = client.post("/api/scans", json={"target": str(repo)})
+    assert resp.status_code == 200
+    scan_id = resp.json()["scan_id"]
+
+    for _ in range(50):
+        res_poll = client.get(f"/api/scans/{scan_id}")
+        if res_poll.status_code == 200 and "skills" in res_poll.json():
+            break
+        time.sleep(0.05)
+
+    sim_resp = client.get(f"/api/scans/{scan_id}/similar?threshold=0.5")
+    assert sim_resp.status_code == 200
+    sim_data = sim_resp.json()
+    assert sim_data["total_skills"] == 2
+    assert len(sim_data["matches"]) == 1
+    assert sim_data["matches"][0]["score"] >= 0.6
