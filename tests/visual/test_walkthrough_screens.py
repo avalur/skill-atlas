@@ -45,12 +45,7 @@ def test_walkthrough_visual_regression(
         page.screenshot(path=str(actual_path))
 
         tolerance = (
-            0.5
-            if (
-                os.environ.get("GITHUB_ACTIONS")
-                or sys.platform.startswith("linux")
-            )
-            else 25.0
+            0.5 if (os.environ.get("GITHUB_ACTIONS") or sys.platform.startswith("linux")) else 25.0
         )
         res = compare_images(
             baseline_path=baseline_path,
