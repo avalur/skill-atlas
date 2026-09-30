@@ -298,3 +298,29 @@ def test_web_filter_ui_elements():
     assert 'oninput="renderSkills()"' in resp.text
     assert "filterWords" in resp.text
     assert "setOriginFilter" in resp.text
+    assert 'id="status-filter-select"' in resp.text
+    assert "setStatusFilter" in resp.text
+
+
+def test_web_theme_toggle_elements():
+    """Verify that the web interface includes light/dark theme toggle and styles."""
+    app = create_app()
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'id="theme-toggle"' in resp.text
+    assert "toggleTheme" in resp.text
+    assert "data-theme" in resp.text
+    assert "initTheme" in resp.text
+
+
+def test_web_similar_ui_controls():
+    """Verify that the web interface includes controls for threshold and per-skill similarity search."""
+    app = create_app()
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert 'id="similar-threshold"' in resp.text
+    assert 'id="similar-query-banner"' in resp.text
+    assert "findSimilarForSkill" in resp.text
+    assert "loadSimilarSkills" in resp.text

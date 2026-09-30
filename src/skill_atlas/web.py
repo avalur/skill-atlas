@@ -34,7 +34,7 @@ HTML_CONTENT = """<!DOCTYPE html>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline';">
   <title>Skill Atlas</title>
   <style>
-    :root {
+    :root, html[data-theme="light"] {
       --bg: #f8fafc;
       --card-bg: #ffffff;
       --text: #0f172a;
@@ -49,7 +49,7 @@ HTML_CONTENT = """<!DOCTYPE html>
       --status-text: #f8fafc;
     }
     @media (prefers-color-scheme: dark) {
-      :root {
+      :root:not([data-theme="light"]) {
         --bg: #0f172a;
         --card-bg: #1e293b;
         --text: #f8fafc;
@@ -60,10 +60,22 @@ HTML_CONTENT = """<!DOCTYPE html>
         --status-bg: #020617;
       }
     }
+    html[data-theme="dark"] {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #334155;
+      --primary: #3b82f6;
+      --primary-hover: #60a5fa;
+      --status-bg: #020617;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); padding-bottom: 70px; }
     header { background: var(--card-bg); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
     header h1 { font-size: 1.25rem; font-weight: 700; }
+    .theme-toggle-btn { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 0.35rem 0.65rem; border-radius: 0.375rem; font-size: 0.95rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background 0.2s, border-color 0.2s; }
+    .theme-toggle-btn:hover { border-color: var(--primary); }
     .badge { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 9999px; font-weight: 600; }
     .badge-primary { background: rgba(59, 130, 246, 0.1); color: var(--primary); }
     .badge-success { background: rgba(16, 185, 129, 0.1); color: var(--success); }
@@ -103,7 +115,10 @@ HTML_CONTENT = """<!DOCTYPE html>
 <body>
   <header>
     <h1>Skill Atlas</h1>
-    <div><span class="badge badge-primary">v0.2.0</span></div>
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+      <button id="theme-toggle" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+      <span class="badge badge-primary">v0.2.0</span>
+    </div>
   </header>
 
   <div class="container">
@@ -135,8 +150,14 @@ HTML_CONTENT = """<!DOCTYPE html>
       </div>
     </div>
 
+    <div id="initial-hint" class="card" style="text-align:center; padding:2.5rem 1rem; color:var(--text-muted); margin-bottom:1.5rem;">
+      <div style="font-size:1.6rem; margin-bottom:0.5rem;">🔍</div>
+      <div style="font-weight:600; font-size:1rem; color:var(--text); margin-bottom:0.35rem;">Ready to scan</div>
+      <div style="font-size:0.875rem;">Enter a repository URL or folder path above and click <b>Scan</b> to discover skills, validate rules, inspect findings, filter skills, and find similar implementations.</div>
+    </div>
+
     <div id="summary-section" style="display:none;" class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 1rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 1rem; flex-wrap:wrap; gap:0.5rem;">
         <div>
           <h2 id="summary-headline" style="font-size:1.15rem;">Scan Summary</h2>
           <div id="summary-sub" style="font-size:0.85rem; color:var(--text-muted); margin-top:0.2rem;"></div>
@@ -147,21 +168,46 @@ HTML_CONTENT = """<!DOCTYPE html>
         </div>
       </div>
       <div class="filter-chips">
-        <div class="chip active" onclick="setOriginFilter('all', event)">All (<span id="count-all">0</span>)</div>
-        <div class="chip" onclick="setOriginFilter('agent-config', event)">Agent Config (<span id="count-agent-config">0</span>)</div>
-        <div class="chip" onclick="setOriginFilter('product', event)">Product (<span id="count-product">0</span>)</div>
-        <div class="chip" onclick="setOriginFilter('standalone', event)">Standalone (<span id="count-standalone">0</span>)</div>
-        <div class="chip" onclick="setOriginFilter('test-data', event)">Test Data (<span id="count-test-data">0</span>)</div>
+        <div class="chip active" id="chip-all" onclick="setOriginFilter('all', event)">All (<span id="count-all">0</span>)</div>
+        <div class="chip" id="chip-agent-config" onclick="setOriginFilter('agent-config', event)">Agent Config (<span id="count-agent-config">0</span>)</div>
+        <div class="chip" id="chip-product" onclick="setOriginFilter('product', event)">Product (<span id="count-product">0</span>)</div>
+        <div class="chip" id="chip-standalone" onclick="setOriginFilter('standalone', event)">Standalone (<span id="count-standalone">0</span>)</div>
+        <div class="chip" id="chip-test-data" onclick="setOriginFilter('test-data', event)">Test Data (<span id="count-test-data">0</span>)</div>
       </div>
       <div class="filter-row">
         <input type="text" id="filter-input" class="filter-input" placeholder="Filter skills by words in name or description..." oninput="renderSkills()">
+        <select id="status-filter-select" style="max-width:140px; padding:0.55rem 0.6rem; font-size:0.85rem;" onchange="setStatusFilter(this.value)">
+          <option value="all">All statuses</option>
+          <option value="pass">Passed only</option>
+          <option value="fail">Failed only</option>
+        </select>
       </div>
     </div>
 
     <div id="similar-section" style="display:none;" class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem;">
-        <h3 style="font-size:1.05rem;">Similar Skills</h3>
-        <span id="similar-count" style="font-size:0.85rem; color:var(--text-muted);"></span>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem; flex-wrap:wrap; gap:0.5rem;">
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+          <h3 style="font-size:1.05rem;">Similar Skills</h3>
+          <span id="similar-count" style="font-size:0.85rem; color:var(--text-muted);"></span>
+        </div>
+        <div style="display:flex; align-items:center; gap:0.5rem; font-size:0.85rem;">
+          <label style="color:var(--text-muted); display:flex; align-items:center; gap:0.3rem;">
+            Threshold:
+            <select id="similar-threshold" style="padding:0.25rem 0.5rem; font-size:0.85rem;" onchange="loadSimilarSkills()">
+              <option value="0.3">≥ 0.3 (broad)</option>
+              <option value="0.4">≥ 0.4</option>
+              <option value="0.5" selected>≥ 0.5 (standard)</option>
+              <option value="0.6">≥ 0.6</option>
+              <option value="0.7">≥ 0.7 (strict)</option>
+              <option value="0.8">≥ 0.8 (very strict)</option>
+            </select>
+          </label>
+          <button class="btn-secondary" style="padding:0.25rem 0.6rem; font-size:0.85rem;" onclick="closeSimilarSkills()" title="Close similar panel">✕</button>
+        </div>
+      </div>
+      <div id="similar-query-banner" style="display:none; background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); border-radius:0.375rem; padding:0.4rem 0.75rem; font-size:0.85rem; margin-bottom:0.75rem; justify-content:space-between; align-items:center;">
+        <span>Showing skills similar to: <b id="similar-query-name"></b></span>
+        <button class="btn-secondary" style="padding:0.15rem 0.5rem; font-size:0.75rem;" onclick="clearSimilarQuery()">Show all pairs</button>
       </div>
       <div id="similar-list"></div>
     </div>
@@ -189,6 +235,38 @@ HTML_CONTENT = """<!DOCTYPE html>
     let eventSource = null;
     let scanResult = null;
     let activeFilter = 'all';
+    let activeStatusFilter = 'all';
+    let currentSimilarQuery = null;
+
+    function initTheme() {
+      const saved = localStorage.getItem('skill-atlas-theme');
+      if (saved === 'dark' || saved === 'light') {
+        document.documentElement.setAttribute('data-theme', saved);
+        updateThemeIcon(saved);
+      } else {
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        updateThemeIcon(prefersDark ? 'dark' : 'light');
+      }
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme');
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const isDark = current ? (current === 'dark') : prefersDark;
+      const next = isDark ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('skill-atlas-theme', next);
+      updateThemeIcon(next);
+    }
+
+    function updateThemeIcon(theme) {
+      const btn = document.getElementById('theme-toggle');
+      if (btn) {
+        btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+        btn.setAttribute('title', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+      }
+    }
+    initTheme();
 
     async function checkHealth() {
       try {
@@ -217,7 +295,22 @@ HTML_CONTENT = """<!DOCTYPE html>
       if (document.getElementById('filter-input')) {
         document.getElementById('filter-input').value = '';
       }
+      if (document.getElementById('status-filter-select')) {
+        document.getElementById('status-filter-select').value = 'all';
+      }
+      activeFilter = 'all';
+      activeStatusFilter = 'all';
+      currentSimilarQuery = null;
+
+      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      const chipAll = document.getElementById('chip-all');
+      if (chipAll) chipAll.classList.add('active');
+
       document.getElementById('summary-section').style.display = 'none';
+      document.getElementById('similar-section').style.display = 'none';
+      if (document.getElementById('initial-hint')) {
+        document.getElementById('initial-hint').style.display = 'none';
+      }
       document.getElementById('cancel-btn').style.display = 'inline-block';
 
       try {
@@ -314,6 +407,11 @@ HTML_CONTENT = """<!DOCTYPE html>
       document.getElementById('scan-btn').disabled = false;
     }
 
+    function setStatusFilter(status) {
+      activeStatusFilter = status;
+      renderSkills();
+    }
+
     function setOriginFilter(origin, evt) {
       activeFilter = origin;
       document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
@@ -327,6 +425,9 @@ HTML_CONTENT = """<!DOCTYPE html>
     function renderResults() {
       if (!scanResult) return;
       document.getElementById('summary-section').style.display = 'block';
+      if (document.getElementById('initial-hint')) {
+        document.getElementById('initial-hint').style.display = 'none';
+      }
       const s = scanResult.summary;
       document.getElementById('summary-headline').textContent =
         `Scanned ${s.total_skills} skills · ${s.passed} passed · ${s.failed} failed`;
@@ -356,10 +457,19 @@ HTML_CONTENT = """<!DOCTYPE html>
         if (activeFilter !== 'all' && sk.origin !== activeFilter) {
           return false;
         }
+        const isPassing = (sk.passing !== undefined && sk.passing !== null) ? sk.passing : sk.valid;
+        if (activeStatusFilter === 'pass' && !isPassing) {
+          return false;
+        }
+        if (activeStatusFilter === 'fail' && isPassing) {
+          return false;
+        }
         if (filterWords.length > 0) {
           const nameLower = (sk.name || '').toLowerCase();
           const descLower = (sk.description || '').toLowerCase();
-          const combined = `${nameLower} ${descLower}`;
+          const tagsLower = (sk.tags || []).join(' ').toLowerCase();
+          const pathLower = (sk.path || '').toLowerCase();
+          const combined = `${nameLower} ${descLower} ${tagsLower} ${pathLower}`;
           const matches = filterWords.every(w => combined.includes(w));
           if (!matches) {
             return false;
@@ -369,7 +479,8 @@ HTML_CONTENT = """<!DOCTYPE html>
       });
 
       if (filtered.length === 0) {
-        const msg = filterWords.length > 0
+        const hasFilters = filterWords.length > 0 || activeFilter !== 'all' || activeStatusFilter !== 'all';
+        const msg = hasFilters
           ? 'No skills matching the filter.'
           : (activeFilter !== 'all' ? 'No skills in this category.' : 'No skills found.');
         list.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--text-muted);">${msg}</div>`;
@@ -410,6 +521,22 @@ HTML_CONTENT = """<!DOCTYPE html>
         }
 
         header.appendChild(titleDiv);
+
+        const actionsDiv = document.createElement('div');
+        actionsDiv.style.display = 'flex';
+        actionsDiv.style.alignItems = 'center';
+        actionsDiv.style.gap = '0.5rem';
+
+        const simBtn = document.createElement('button');
+        simBtn.className = 'btn-secondary';
+        simBtn.style.padding = '0.25rem 0.55rem';
+        simBtn.style.fontSize = '0.75rem';
+        simBtn.textContent = '⧉ Similar';
+        simBtn.title = `Find skills similar to ${sk.name}`;
+        simBtn.onclick = () => findSimilarForSkill(sk.name);
+        actionsDiv.appendChild(simBtn);
+
+        header.appendChild(actionsDiv);
         item.appendChild(header);
 
         if (sk.description) {
@@ -428,6 +555,11 @@ HTML_CONTENT = """<!DOCTYPE html>
           const uSpan = document.createElement('span');
           uSpan.textContent = `Updated: ${sk.updated_date}`;
           meta.appendChild(uSpan);
+        }
+        if (sk.tags && sk.tags.length > 0) {
+          const tSpan = document.createElement('span');
+          tSpan.textContent = `Tags: ${sk.tags.join(', ')}`;
+          meta.appendChild(tSpan);
         }
         item.appendChild(meta);
 
@@ -499,25 +631,71 @@ HTML_CONTENT = """<!DOCTYPE html>
       a.remove();
     }
 
+    function closeSimilarSkills() {
+      document.getElementById('similar-section').style.display = 'none';
+      currentSimilarQuery = null;
+    }
+
+    function clearSimilarQuery() {
+      currentSimilarQuery = null;
+      loadSimilarSkills();
+    }
+
     async function toggleSimilarSkills() {
       const section = document.getElementById('similar-section');
-      if (section.style.display === 'block') {
+      if (section.style.display === 'block' && !currentSimilarQuery) {
         section.style.display = 'none';
         return;
       }
+      currentSimilarQuery = null;
+      await loadSimilarSkills();
+    }
+
+    async function findSimilarForSkill(skillName) {
+      currentSimilarQuery = skillName;
+      await loadSimilarSkills();
+      const section = document.getElementById('similar-section');
+      section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    async function loadSimilarSkills() {
       if (!currentScanId) return;
+      const section = document.getElementById('similar-section');
       section.style.display = 'block';
+
+      const banner = document.getElementById('similar-query-banner');
+      if (currentSimilarQuery) {
+        banner.style.display = 'flex';
+        document.getElementById('similar-query-name').textContent = currentSimilarQuery;
+      } else {
+        banner.style.display = 'none';
+      }
+
+      const thresholdSelect = document.getElementById('similar-threshold');
+      const threshold = thresholdSelect ? parseFloat(thresholdSelect.value) : 0.5;
+
       const list = document.getElementById('similar-list');
-      list.innerHTML = '<div style="color:var(--text-muted); font-size:0.9rem;">Finding similar skills...</div>';
+      list.innerHTML = '<div style="color:var(--text-muted); font-size:0.9rem; padding:0.5rem 0;">Finding similar skills...</div>';
 
       try {
-        const resp = await fetch(`/api/scans/${currentScanId}/similar`);
+        let url = `/api/scans/${currentScanId}/similar?threshold=${threshold}&top_k=20`;
+        if (currentSimilarQuery) {
+          url += `&skill=${encodeURIComponent(currentSimilarQuery)}`;
+        }
+        const resp = await fetch(url);
         if (!resp.ok) throw new Error('Failed to compute similarity');
         const data = await resp.json();
-        document.getElementById('similar-count').textContent = `${data.matches.length} matches (threshold >= ${data.threshold})`;
+
+        document.getElementById('similar-count').textContent =
+          `${data.matches.length} matches (threshold >= ${data.threshold})`;
 
         if (data.matches.length === 0) {
-          list.innerHTML = '<div style="color:var(--text-muted); font-size:0.9rem; padding:0.5rem 0;">No similar skills found exceeding the threshold.</div>';
+          list.innerHTML = `
+            <div style="color:var(--text-muted); font-size:0.9rem; padding:0.75rem 0; text-align:center;">
+              No similar skills found exceeding threshold &ge; ${data.threshold}.
+              <div style="font-size:0.8rem; margin-top:0.3rem;">Try selecting a lower threshold (e.g. 0.3 or 0.4) above.</div>
+            </div>
+          `;
           return;
         }
 
@@ -535,7 +713,11 @@ HTML_CONTENT = """<!DOCTYPE html>
 
           mDiv.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
-              <div style="font-weight:600; font-size:0.95rem;">${escapeHtml(m.skill_a)} ↔ ${escapeHtml(m.skill_b)}</div>
+              <div style="font-weight:600; font-size:0.95rem;">
+                <span style="color:var(--primary); cursor:pointer;" onclick="filterByKeyword('${escapeHtml(m.skill_a)}')">${escapeHtml(m.skill_a)}</span>
+                <span style="color:var(--text-muted); font-weight:normal; margin:0 0.3rem;">↔</span>
+                <span style="color:var(--primary); cursor:pointer;" onclick="filterByKeyword('${escapeHtml(m.skill_b)}')">${escapeHtml(m.skill_b)}</span>
+              </div>
               <span class="badge ${badgeClass}">${pct}% match</span>
             </div>
             <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.4rem;">
@@ -550,6 +732,15 @@ HTML_CONTENT = """<!DOCTYPE html>
         }
       } catch (err) {
         list.innerHTML = `<div style="color:var(--error); font-size:0.9rem;">Error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function filterByKeyword(word) {
+      const input = document.getElementById('filter-input');
+      if (input) {
+        input.value = word;
+        renderSkills();
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
   </script>
@@ -860,12 +1051,27 @@ def run_server(
     port: int = 8765,
     open_browser: bool = False,
     allow_local: bool = False,
+    reload: bool = False,
 ) -> None:
     """Launch Uvicorn server hosting Skill Atlas web interface."""
     import uvicorn
 
     if host == "0.0.0.0":  # noqa: S104
         print("⚠️  Warning: Binding server to 0.0.0.0 exposes Skill Atlas to your local network.")
+
+    if reload:
+        if open_browser:
+            threading.Timer(1.0, lambda: webbrowser.open(f"http://{host}:{port}")).start()
+        print(f"🚀 Skill Atlas Web Interface running at http://{host}:{port} (auto-reload enabled)")
+        uvicorn.run(
+            "skill_atlas.web:create_app",
+            host=host,
+            port=port,
+            log_level="info",
+            reload=True,
+            factory=True,
+        )
+        return
 
     app = create_app(allow_local=allow_local)
 

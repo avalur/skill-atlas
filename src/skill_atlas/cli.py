@@ -357,6 +357,10 @@ def serve_command(
         bool,
         typer.Option("--allow-local", help="Allow scanning local directories via web interface."),
     ] = False,
+    reload: Annotated[
+        bool,
+        typer.Option("--reload", help="Enable auto-reload on code changes (development)."),
+    ] = False,
 ) -> None:
     """Start local web interface for Skill Atlas."""
     try:
@@ -369,7 +373,9 @@ def serve_command(
         )
         raise typer.Exit(code=2) from err
 
-    run_server(host=host, port=port, open_browser=open_browser, allow_local=allow_local)
+    run_server(
+        host=host, port=port, open_browser=open_browser, allow_local=allow_local, reload=reload
+    )
 
 
 if __name__ == "__main__":

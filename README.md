@@ -35,9 +35,10 @@ As the number of skills grows, key challenges emerge:
   - Multi-feature composite scoring (name token overlap, description TF-IDF/cosine similarity, shared tags, prompt structure, companion script names).
   - Human-readable match reasons and feature breakdown.
 - **Interactive Local Web Interface**:
-  - Launch an interactive local catalog with `skill-atlas serve`.
+  - Launch an interactive local catalog with `skill-atlas serve` (supporting `--reload` for development).
   - Pinned real-time status bar reporting exact operations, progress, and rate limit budget.
-  - Interactive "Find Similar" tool, filter chips by origin, collapsible findings, and instant JSON download.
+  - Light and dark theme switcher with system preference detection and localStorage persistence.
+  - Interactive "Find Similar" tool with threshold controls, keyword and status filters, and instant JSON download.
 - **Reporting & CI/CD**:
   - Formatted terminal output via Rich.
   - Machine-readable structured JSON export.
