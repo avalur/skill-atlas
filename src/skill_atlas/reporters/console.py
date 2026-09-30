@@ -7,6 +7,7 @@ from rich.markup import escape
 from rich.rule import Rule as RichRule
 
 from skill_atlas.models import ScanResult, Severity
+from skill_atlas.similarity import SimilarSkillsResult
 
 ANSI_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -130,3 +131,47 @@ class ConsoleReporter:
             self.console.print("[bold red]Status: FAILED (Exit Code 1)[/bold red]")
         else:
             self.console.print("[bold green]Status: SUCCESS (Exit Code 0)[/bold green]")
+
+    def render_similarity(
+        self,
+        result: SimilarSkillsResult,
+        verbose: bool = False,
+    ) -> None:
+        target_display = _sanitize(result.target)
+        self.console.print(
+            f"[bold]🔍 Finding similar skills in:[/bold] {target_display} "
+            f"[dim](threshold: {result.threshold:.2f}, total skills: {result.total_skills})[/dim]\n"
+        )
+        if not result.matches:
+            self.console.print("  [dim]No similar skills found matching the criteria.[/dim]\n")
+        else:
+            for match in result.matches:
+                score_pct = round(match.score * 100)
+                if score_pct >= 80:
+                    score_badge = f"[bold green]{score_pct}%[/bold green]"
+                elif score_pct >= 60:
+                    score_badge = f"[bold yellow]{score_pct}%[/bold yellow]"
+                else:
+                    score_badge = f"[cyan]{score_pct}%[/cyan]"
+
+                self.console.print(
+                    f"• [bold]{_sanitize(match.skill_a)}[/bold] [dim]({_sanitize(match.skill_a_path)})[/dim] "
+                    f"↔ [bold]{_sanitize(match.skill_b)}[/bold] [dim]({_sanitize(match.skill_b_path)})[/dim] "
+                    f"— Similarity: {score_badge}"
+                )
+                for r in match.reasons:
+                    self.console.print(f"    [dim]↳ {_sanitize(r)}[/dim]")
+
+                if verbose:
+                    b = match.breakdown
+                    self.console.print(
+                        f"    [dim]Breakdown: name={b.name:.2f}, desc={b.description:.2f}, "
+                        f"tags={b.tags:.2f}, body={b.body:.2f}, files={b.files:.2f}[/dim]"
+                    )
+                self.console.print()
+
+        self.console.print(RichRule(style="dim"))
+        self.console.print(
+            f"[bold]Summary:[/bold] Found {len(result.matches)} similar skill match(es) "
+            f"across {result.total_skills} skills."
+        )

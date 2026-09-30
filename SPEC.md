@@ -190,8 +190,31 @@ skill-atlas serve [OPTIONS]
   - Search filter input to filter skills in real time by words in names and descriptions.
   - Export full scan results as JSON.
 
-### 4.4. Exit Codes:
-- `0`: Success (all checks passed or findings are below `--fail-on` threshold).
+### 4.4. `similar` Command Syntax:
+```bash
+skill-atlas similar [TARGET] [OPTIONS]
+```
+- `TARGET`: Directory path, local Git repo, or remote Git URL (default: `.`).
+- `--skill`, `-s`: Specific skill name or path to query similar skills for.
+- `--threshold`, `-t`: Minimum similarity score threshold between `0.0` and `1.0` (default: `0.5`).
+- `--top-k`, `-k`: Maximum number of matches to return (default: `10`).
+- `--format`, `-f`: Output format (`text` or `json`, default: `text`).
+- `--ref`: Pinned Git reference for remote scans.
+- `--include-test-data`: Include test-data skills in similarity analysis.
+- `--verbose`, `-v`: Output detailed score breakdown per feature.
+
+### 4.5. Non-AI Similarity Heuristics:
+The similarity engine calculates a multi-feature composite score between `0.0` and `1.0`:
+1. **Name Similarity** (weight `0.30`): Normalized token Jaccard similarity and character sequence ratio.
+2. **Description Similarity** (weight `0.40`): Bag-of-words cosine token similarity (stop words removed) and Jaccard overlap.
+3. **Tags Similarity** (weight `0.15`): Jaccard similarity of declared tags.
+4. **Body / Instructions Similarity** (weight `0.10`): Cosine token similarity across markdown prompt instructions.
+5. **Companion Files Similarity** (weight `0.05`): Matching script and file basenames.
+
+Dynamic re-weighting occurs when optional attributes (tags, files, body) are absent. Each match includes human-readable reasons explaining why the skills are similar.
+
+### 4.6. Exit Codes:
+- `0`: Success (all checks passed or findings are below `--fail-on` threshold, or similar search completed).
 - `1`: Violations found at or above `--fail-on` threshold (default: `ERROR`).
 - `2`: Fatal CLI error (invalid options, non-existent target path, argument parsing failure, rate limit exhausted).
 

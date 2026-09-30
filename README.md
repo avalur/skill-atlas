@@ -30,10 +30,14 @@ As the number of skills grows, key challenges emerge:
 - **Specification & Security Audit**:
   - Schema consistency (`SCH-001` through `SCH-006`).
   - Static security auditing for exposed secrets, destructive commands, unsafe pipes, sensitive paths, and prompt injection (`SEC-001` through `SEC-005`).
+- **Heuristic Similarity Discovery (No AI)**:
+  - Find similar and overlapping skills using fast, transparent heuristics (`skill-atlas similar`).
+  - Multi-feature composite scoring (name token overlap, description TF-IDF/cosine similarity, shared tags, prompt structure, companion script names).
+  - Human-readable match reasons and feature breakdown.
 - **Interactive Local Web Interface**:
   - Launch an interactive local catalog with `skill-atlas serve`.
   - Pinned real-time status bar reporting exact operations, progress, and rate limit budget.
-  - Filter chips by origin, collapsible findings, and instant JSON download.
+  - Interactive "Find Similar" tool, filter chips by origin, collapsible findings, and instant JSON download.
 - **Reporting & CI/CD**:
   - Formatted terminal output via Rich.
   - Machine-readable structured JSON export.
@@ -52,6 +56,9 @@ uv run skill-atlas scan ./skills
 
 # Scan remote GitHub repository without cloning
 uv run skill-atlas scan https://github.com/JetBrains/kotlin
+
+# Find similar skills in a repository or folder
+uv run skill-atlas similar ./skills --threshold 0.5
 
 # Launch local interactive Web UI
 uv run skill-atlas serve
