@@ -79,3 +79,6 @@ sbx-*.sh
 artifacts/
 *.webm
 *.mp4
+!docs/assets/*.mp4
+!docs/assets/*.gif
+!docs/assets/*.png

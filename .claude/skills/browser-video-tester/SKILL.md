@@ -35,12 +35,19 @@ Autonomous browser testing skill inspired by [`video-use`](https://github.com/br
 
 - [Browser Tester Engine](scripts/browser_tester.py): Core Playwright harness with visual cursor, action banners, video recording, and ffmpeg encoding.
 - [Web UI Audit Runner](scripts/run_web_audit.py): End-to-end interactive test suite covering theme toggle, search, status and origin filters, scanning, and similar skills discovery.
+- [Upbeat Music Generator](scripts/generate_music.py): Synthesizer for high-energy 128 BPM electronic background music with sidechain ducking and punchy drums.
+- [Demo Video Recorder](scripts/record_demo.py): Automated pipeline recording high-definition demo walkthroughs, merging upbeat music, and outputting optimized MP4, GIF, and PNG assets for README and PR documentation.
 
 ## Usage
 
 ### Run Pre-Configured Web UI Audit
 ```bash
 uv run python .claude/skills/browser-video-tester/scripts/run_web_audit.py --url http://127.0.0.1:8765
+```
+
+### Record Demo Video with Music & GIF Preview
+```bash
+uv run python .claude/skills/browser-video-tester/scripts/record_demo.py
 ```
 
 ### Custom Feature Test Script

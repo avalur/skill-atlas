@@ -16,6 +16,18 @@ As the number of skills grows, key challenges emerge:
 
 ---
 
+## 📺 Demo
+
+<p align="center">
+  <a href="docs/assets/demo.mp4">
+    <img src="docs/assets/demo.gif" alt="Skill Atlas Live Demo Walkthrough" width="100%" style="border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.15);" />
+  </a>
+  <br />
+  <em>🎵 <strong>Click image or <a href="docs/assets/demo.mp4">watch full HD video with upbeat soundtrack (MP4)</a></strong></em>
+</p>
+
+---
+
 ## 🚀 Features (v0.2.0)
 
 - **Git Repositories & Discovery**:
