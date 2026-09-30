@@ -5,6 +5,7 @@ import os
 import queue
 import secrets
 import threading
+import time
 import uuid
 import webbrowser
 from typing import Any, Literal
@@ -24,7 +25,7 @@ from skill_atlas.models import (
     Stage,
 )
 from skill_atlas.scanner import Scanner
-from skill_atlas.similarity import find_similar_skills
+from skill_atlas.similarity import SimilarSkillMatch, SimilarSkillsResult, find_similar_skills
 
 HTML_CONTENT = """<!DOCTYPE html>
 <html lang="en">
@@ -275,6 +276,12 @@ HTML_CONTENT = """<!DOCTYPE html>
           const data = await res.json();
           const tokenText = data.github_token_configured ? 'Token Active' : 'No Token (~60 req/hr)';
           document.getElementById('rate-limit-badge').textContent = tokenText;
+          if (!data.github_token_configured) {
+            const statusText = document.getElementById('status-text');
+            if (statusText && (statusText.textContent.includes('Ready to scan') || !statusText.textContent)) {
+              statusText.textContent = 'Ready to scan · No GITHUB_TOKEN: limited to ~25 skills per hour';
+            }
+          }
         }
       } catch (e) {}
     }
@@ -690,12 +697,15 @@ HTML_CONTENT = """<!DOCTYPE html>
           `${data.matches.length} matches (threshold >= ${data.threshold})`;
 
         if (data.matches.length === 0) {
-          list.innerHTML = `
-            <div style="color:var(--text-muted); font-size:0.9rem; padding:0.75rem 0; text-align:center;">
-              No similar skills found exceeding threshold &ge; ${data.threshold}.
-              <div style="font-size:0.8rem; margin-top:0.3rem;">Try selecting a lower threshold (e.g. 0.3 or 0.4) above.</div>
-            </div>
-          `;
+          list.innerHTML = '';
+          const emptyDiv = document.createElement('div');
+          emptyDiv.style.cssText = 'color:var(--text-muted); font-size:0.9rem; padding:0.75rem 0; text-align:center;';
+          emptyDiv.textContent = `No similar skills found exceeding threshold >= ${data.threshold}.`;
+          const hintDiv = document.createElement('div');
+          hintDiv.style.cssText = 'font-size:0.8rem; margin-top:0.3rem;';
+          hintDiv.textContent = 'Try selecting a lower threshold (e.g. 0.3 or 0.4) above.';
+          emptyDiv.appendChild(hintDiv);
+          list.appendChild(emptyDiv);
           return;
         }
 
@@ -711,27 +721,81 @@ HTML_CONTENT = """<!DOCTYPE html>
           const pct = Math.round(m.score * 100);
           const badgeClass = pct >= 80 ? 'badge-success' : (pct >= 60 ? 'badge-warn' : 'badge-primary');
 
-          mDiv.innerHTML = `
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.4rem;">
-              <div style="font-weight:600; font-size:0.95rem;">
-                <span style="color:var(--primary); cursor:pointer;" onclick="filterByKeyword('${escapeHtml(m.skill_a)}')">${escapeHtml(m.skill_a)}</span>
-                <span style="color:var(--text-muted); font-weight:normal; margin:0 0.3rem;">↔</span>
-                <span style="color:var(--primary); cursor:pointer;" onclick="filterByKeyword('${escapeHtml(m.skill_b)}')">${escapeHtml(m.skill_b)}</span>
-              </div>
-              <span class="badge ${badgeClass}">${pct}% match</span>
-            </div>
-            <div style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.4rem;">
-              <div>• ${escapeHtml(m.skill_a)}: ${escapeHtml(m.skill_a_path)}</div>
-              <div>• ${escapeHtml(m.skill_b)}: ${escapeHtml(m.skill_b_path)}</div>
-            </div>
-            <div style="font-size:0.85rem;">
-              ${m.reasons.map(r => `<div style="color:var(--text); margin-top:0.2rem;">↳ ${escapeHtml(r)}</div>`).join('')}
-            </div>
-          `;
+          const topRow = document.createElement('div');
+          topRow.style.display = 'flex';
+          topRow.style.justifyContent = 'space-between';
+          topRow.style.alignItems = 'center';
+          topRow.style.marginBottom = '0.4rem';
+
+          const titleDiv = document.createElement('div');
+          titleDiv.style.fontWeight = '600';
+          titleDiv.style.fontSize = '0.95rem';
+
+          const spanA = document.createElement('span');
+          spanA.style.color = 'var(--primary)';
+          spanA.style.cursor = 'pointer';
+          spanA.textContent = m.skill_a;
+          spanA.onclick = () => filterByKeyword(m.skill_a);
+
+          const arrowSpan = document.createElement('span');
+          arrowSpan.style.color = 'var(--text-muted)';
+          arrowSpan.style.fontWeight = 'normal';
+          arrowSpan.style.margin = '0 0.3rem';
+          arrowSpan.textContent = '↔';
+
+          const spanB = document.createElement('span');
+          spanB.style.color = 'var(--primary)';
+          spanB.style.cursor = 'pointer';
+          spanB.textContent = m.skill_b;
+          spanB.onclick = () => filterByKeyword(m.skill_b);
+
+          titleDiv.appendChild(spanA);
+          titleDiv.appendChild(arrowSpan);
+          titleDiv.appendChild(spanB);
+
+          const badgeSpan = document.createElement('span');
+          badgeSpan.className = `badge ${badgeClass}`;
+          badgeSpan.textContent = `${pct}% match`;
+
+          topRow.appendChild(titleDiv);
+          topRow.appendChild(badgeSpan);
+          mDiv.appendChild(topRow);
+
+          const pathsDiv = document.createElement('div');
+          pathsDiv.style.fontSize = '0.8rem';
+          pathsDiv.style.color = 'var(--text-muted)';
+          pathsDiv.style.marginBottom = '0.4rem';
+
+          const pA = document.createElement('div');
+          pA.textContent = `• ${m.skill_a}: ${m.skill_a_path}`;
+          const pB = document.createElement('div');
+          pB.textContent = `• ${m.skill_b}: ${m.skill_b_path}`;
+          pathsDiv.appendChild(pA);
+          pathsDiv.appendChild(pB);
+          mDiv.appendChild(pathsDiv);
+
+          if (m.reasons && m.reasons.length > 0) {
+            const reasonsDiv = document.createElement('div');
+            reasonsDiv.style.fontSize = '0.85rem';
+            for (const r of m.reasons) {
+              const rDiv = document.createElement('div');
+              rDiv.style.color = 'var(--text)';
+              rDiv.style.marginTop = '0.2rem';
+              rDiv.textContent = `↳ ${r}`;
+              reasonsDiv.appendChild(rDiv);
+            }
+            mDiv.appendChild(reasonsDiv);
+          }
+
           list.appendChild(mDiv);
         }
       } catch (err) {
-        list.innerHTML = `<div style="color:var(--error); font-size:0.9rem;">Error: ${escapeHtml(err.message)}</div>`;
+        list.innerHTML = '';
+        const errDiv = document.createElement('div');
+        errDiv.style.color = 'var(--error)';
+        errDiv.style.fontSize = '0.9rem';
+        errDiv.textContent = `Error: ${err.message}`;
+        list.appendChild(errDiv);
       }
     }
 
@@ -772,6 +836,7 @@ class ScanJob:
         self.listeners: list[asyncio.Queue[ProgressEvent]] = []
         self.loop: asyncio.AbstractEventLoop | None = None
         self.lock = threading.Lock()
+        self.cached_all_matches: list[SimilarSkillMatch] | None = None
 
     def add_event(self, event: ProgressEvent) -> None:
         self.events.append(event)
@@ -860,6 +925,8 @@ def create_app(
     allow_local: bool = False,
     scanner: Scanner | None = None,
     job_manager: JobManager | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8765,
 ) -> FastAPI:
     """Create configured FastAPI application."""
     app = FastAPI(title="Skill Atlas Web", version=__version__)
@@ -871,19 +938,20 @@ def create_app(
     )
 
     manager = job_manager or JobManager()
+    allowed_origins = {
+        f"http://{host}:{port}",
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+        "http://testserver",
+        "https://testserver",
+    }
 
     @app.middleware("http")
     async def origin_and_security_headers(request: Request, call_next: Any) -> Response:
         origin = request.headers.get("origin")
         if origin:
             clean_origin = origin.rstrip("/")
-            allowed = (
-                "http://127.0.0.1",
-                "http://localhost",
-                "http://testserver",
-                "https://testserver",
-            )
-            if not any(clean_origin == a or clean_origin.startswith(f"{a}:") for a in allowed):
+            if clean_origin not in allowed_origins:
                 return Response(
                     content='{"detail": "Forbidden: cross-origin requests are not allowed"}',
                     status_code=403,
@@ -895,21 +963,30 @@ def create_app(
         )
         return response
 
+    _health_cache: dict[str, Any] = {"time": 0.0, "data": None}
+
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return HTML_CONTENT.replace("{{CSRF_TOKEN}}", app.state.csrf_token)
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
+        now = time.time()
+        if _health_cache["data"] is not None and (now - _health_cache["time"]) < 30.0:
+            return _health_cache["data"]
+
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         gh_client = GitHubClient(token=token)
         rem = gh_client.get_rate_limit()
-        return {
+        data = {
             "version": __version__,
             "status": "healthy",
             "github_token_configured": bool(gh_client.token),
             "rate_limit_remaining": rem,
         }
+        _health_cache["time"] = now
+        _health_cache["data"] = data
+        return data
 
     @app.post("/api/scans")
     def start_scan(req: ScanRequest, request: Request) -> dict[str, str]:
@@ -1005,6 +1082,11 @@ def create_app(
         skill: str | None = None,
         top_k: int = 10,
     ) -> Any:
+        if not (0.0 <= threshold <= 1.0):
+            raise HTTPException(status_code=422, detail="threshold must be between 0.0 and 1.0")
+        if not (1 <= top_k <= 100):
+            raise HTTPException(status_code=422, detail="top_k must be between 1 and 100")
+
         job = manager.get_job(scan_id)
         if not job:
             raise HTTPException(status_code=404, detail="Scan not found")
@@ -1015,13 +1097,34 @@ def create_app(
         if not job.request.include_test_data:
             skills = [s for s in skills if s.origin != SkillOrigin.TEST_DATA]
 
-        sim_res = find_similar_skills(
-            skills=skills,
-            query_skill=skill,
-            threshold=threshold,
-            top_k=top_k,
-            target=job.request.target,
-        )
+        with job.lock:
+            if not skill:
+                if job.cached_all_matches is None:
+                    full_res = find_similar_skills(
+                        skills=skills,
+                        query_skill=None,
+                        threshold=0.0,
+                        top_k=0,
+                        target=job.request.target,
+                    )
+                    job.cached_all_matches = full_res.matches
+                filtered_matches = [m for m in job.cached_all_matches if m.score >= threshold][
+                    :top_k
+                ]
+                sim_res = SimilarSkillsResult(
+                    target=job.request.target,
+                    threshold=threshold,
+                    total_skills=len(skills),
+                    matches=filtered_matches,
+                )
+            else:
+                sim_res = find_similar_skills(
+                    skills=skills,
+                    query_skill=skill,
+                    threshold=threshold,
+                    top_k=top_k,
+                    target=job.request.target,
+                )
         return JSONResponse(content=sim_res.model_dump())
 
     @app.delete("/api/scans/{scan_id}")
@@ -1073,7 +1176,7 @@ def run_server(
         )
         return
 
-    app = create_app(allow_local=allow_local)
+    app = create_app(allow_local=allow_local, host=host, port=port)
 
     if open_browser:
         threading.Timer(1.0, lambda: webbrowser.open(f"http://{host}:{port}")).start()

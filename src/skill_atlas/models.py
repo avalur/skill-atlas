@@ -116,7 +116,11 @@ def classify_origin(path: str) -> SkillOrigin:
         if lower_part in {"test", "tests", "testdata", "fixtures", "test-resources"}:
             return SkillOrigin.TEST_DATA
 
-    if re.search(r"(^|/)(src/[^/]*test[^/]*|testData|test-data)(/|$)", normalized, re.IGNORECASE):
+    if re.search(
+        r"(^|/)(src/[^/]*test[^/]*|testData|test-data|integration-tests?)(/|$)",
+        normalized,
+        re.IGNORECASE,
+    ):
         return SkillOrigin.TEST_DATA
 
     # 2. Agent config check
@@ -225,10 +229,15 @@ class ScanResult(BaseModel):
     target: str
     summary: ScanSummary
     skills: list[Skill]
+    warnings: list[str] = Field(default_factory=list)
 
     def has_failures(self, fail_on: str = "error", include_test_data: bool = False) -> bool:
         """Check if any skill failed the threshold or if there are blocking findings."""
-        return any(not s.is_passing(fail_on, include_test_data) for s in self.skills)
+        if any(not s.is_passing(fail_on, include_test_data) for s in self.skills):
+            return True
+        if fail_on.lower().strip() == "warn" and bool(self.warnings):
+            return True
+        return False
 
     def exit_code(self, fail_on: str = "error", include_test_data: bool = False) -> int:
         """Return the standard CLI exit code based on findings."""

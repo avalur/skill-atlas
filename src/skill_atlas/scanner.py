@@ -141,6 +141,7 @@ class Scanner:
         cancel_event: threading.Event | None = None,
         http_client: httpx.Client | None = None,
         gh_client: GitHubClient | None = None,
+        discovery_only: bool = False,
     ) -> ScanResult:
         """Scan a target path or Git URL for AI Agent Skills."""
         target_str = str(target)
@@ -151,6 +152,7 @@ class Scanner:
         effective_gh_client = gh_client or (
             GitHubClient() if is_remote_target(target_str) else None
         )
+        scan_warnings: list[str] = []
 
         def emit(
             stage: Stage,
@@ -189,6 +191,8 @@ class Scanner:
                     http_client=http_client,
                     on_progress=on_progress,
                     cancel_event=cancel_event,
+                    discovery_only=discovery_only,
+                    warnings=scan_warnings,
                 )
             else:
                 emit(Stage.VALIDATE, f"Validating local path {target_str}...")
@@ -205,69 +209,73 @@ class Scanner:
             warn_count = 0
             info_count = 0
 
-            for idx, skill in enumerate(skills, start=1):
-                check_cancel()
-                emit(
-                    Stage.RULES,
-                    f"Running rules on {skill.path} ({idx}/{len(skills)})",
-                    current=idx,
-                    total=len(skills),
-                    skill_path=skill.path,
-                )
-
-                self.registry.evaluate(
-                    skill,
-                    category=self.rules_category,
-                    ignored_ids=self.ignored_rules,
-                )
-
-                # Audit all duplicate copies as well (C2 fix)
-                for other in getattr(skill, "duplicate_skills", []):
+            if discovery_only:
+                for skill in skills:
+                    skill.passing = True
+            else:
+                for idx, skill in enumerate(skills, start=1):
                     check_cancel()
+                    emit(
+                        Stage.RULES,
+                        f"Running rules on {skill.path} ({idx}/{len(skills)})",
+                        current=idx,
+                        total=len(skills),
+                        skill_path=skill.path,
+                    )
+
                     self.registry.evaluate(
-                        other,
+                        skill,
                         category=self.rules_category,
                         ignored_ids=self.ignored_rules,
                     )
-                    # Record findings on the DuplicateRef
-                    for d_ref in skill.duplicates:
-                        if d_ref.path == other.path:
-                            d_ref.findings = list(other.findings)
-                            break
-                    # Propagate duplicate findings to the shown skill with explicit copy path
-                    for f in other.findings:
-                        loc = (
-                            f"{other.path}/{f.file}"
-                            if not f.file.startswith(other.path)
-                            else f.file
+
+                    # Audit all duplicate copies as well (C2 fix)
+                    for other in getattr(skill, "duplicate_skills", []):
+                        check_cancel()
+                        self.registry.evaluate(
+                            other,
+                            category=self.rules_category,
+                            ignored_ids=self.ignored_rules,
                         )
-                        skill.add_finding(
-                            Finding(
-                                rule_id=f.rule_id,
-                                severity=f.severity,
-                                message=f"[In duplicate copy '{other.path}'] {f.message}",
-                                file=loc,
-                                line=f.line,
-                                suggestion=f.suggestion,
+                        # Record findings on the DuplicateRef
+                        for d_ref in skill.duplicates:
+                            if d_ref.path == other.path:
+                                d_ref.findings = list(other.findings)
+                                break
+                        # Propagate duplicate findings to the shown skill with explicit copy path
+                        for f in other.findings:
+                            loc = (
+                                f"{other.path}/{f.file}"
+                                if not f.file.startswith(other.path)
+                                else f.file
                             )
-                        )
-                    other.companion_contents.clear()
+                            skill.add_finding(
+                                Finding(
+                                    rule_id=f.rule_id,
+                                    severity=f.severity,
+                                    message=f"[In duplicate copy '{other.path}'] {f.message}",
+                                    file=loc,
+                                    line=f.line,
+                                    suggestion=f.suggestion,
+                                )
+                            )
+                        other.companion_contents.clear()
 
-                # Free companion contents from memory
-                skill.companion_contents.clear()
+                    # Free companion contents from memory
+                    skill.companion_contents.clear()
 
-                # Count findings
-                for f in skill.findings:
-                    if f.severity == Severity.ERROR:
-                        error_count += 1
-                    elif f.severity == Severity.WARN:
-                        warn_count += 1
-                    elif f.severity == Severity.INFO:
-                        info_count += 1
+                    # Count findings
+                    for f in skill.findings:
+                        if f.severity == Severity.ERROR:
+                            error_count += 1
+                        elif f.severity == Severity.WARN:
+                            warn_count += 1
+                        elif f.severity == Severity.INFO:
+                            info_count += 1
 
-                skill.passing = skill.is_passing(
-                    self.fail_on, include_test_data=effective_include_test_data
-                )
+                    skill.passing = skill.is_passing(
+                        self.fail_on, include_test_data=effective_include_test_data
+                    )
 
             # 4. Calculate summary metrics by origin and pass/fail status
             check_cancel()
@@ -312,6 +320,7 @@ class Scanner:
                 target=target_str,
                 summary=summary,
                 skills=skills,
+                warnings=scan_warnings,
             )
         except Exception as err:
             emit(Stage.ERROR, str(err))

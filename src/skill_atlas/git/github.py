@@ -40,22 +40,40 @@ class RateLimitError(RuntimeError):
         super().__init__(msg)
 
 
+_cached_gh_token: str | None = None
+_gh_token_checked: bool = False
+
+
+def _resolve_gh_cli_token() -> str | None:
+    """Resolve token from GitHub CLI once and cache result."""
+    global _cached_gh_token, _gh_token_checked
+    if _gh_token_checked:
+        return _cached_gh_token
+    _gh_token_checked = True
+    if shutil.which("gh"):
+        with contextlib.suppress(subprocess.SubprocessError, OSError):
+            res = subprocess.run(
+                ["gh", "auth", "token"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                _cached_gh_token = res.stdout.strip()
+    return _cached_gh_token
+
+
 class GitHubClient:
     """Client for scanning GitHub repositories via REST API and raw downloads."""
 
     def __init__(self, token: str | None = None) -> None:
-        self.token = token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-        if not self.token and shutil.which("gh"):
-            with contextlib.suppress(subprocess.SubprocessError, OSError):
-                res = subprocess.run(
-                    ["gh", "auth", "token"],
-                    capture_output=True,
-                    text=True,
-                    timeout=3,
-                    check=False,
-                )
-                if res.returncode == 0 and res.stdout.strip():
-                    self.token = res.stdout.strip()
+        self.token = (
+            token
+            or os.environ.get("GITHUB_TOKEN")
+            or os.environ.get("GH_TOKEN")
+            or _resolve_gh_cli_token()
+        )
         self.api_base = "https://api.github.com"
         self.raw_base = "https://raw.githubusercontent.com"
         self.rate_limit_remaining: int | None = None

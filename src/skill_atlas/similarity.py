@@ -301,7 +301,11 @@ def calculate_description_similarity(desc1: str, desc2: str) -> tuple[float, lis
         return 0.0, reasons
 
     d1, d2 = desc1.strip().lower(), desc2.strip().lower()
+    # Guard against identical trivial/placeholder descriptions (e.g. "TODO")
+    placeholder_descriptions = {"todo", "tbd", "n/a", "none", "test", "description", "skill"}
     if d1 == d2:
+        if d1 in placeholder_descriptions or len(d1) < 10:
+            return 0.1, reasons
         reasons.append("Identical description text")
         return 1.0, reasons
 
@@ -446,9 +450,15 @@ def compare_skills(s1: Skill, s2: Skill) -> SimilarSkillMatch:
     overall_score = weighted_sum / total_weight if total_weight > 0 else 0.0
 
     # Boost score if name or description is exceptionally close
-    if name_score >= 0.95 and desc_score >= 0.8:
+    is_meaningful_desc = (
+        len(s1.description.strip()) >= 10
+        and len(s2.description.strip()) >= 10
+        and s1.description.strip().lower()
+        not in {"todo", "tbd", "n/a", "none", "test", "description", "skill"}
+    )
+    if name_score >= 0.95 and desc_score >= 0.8 and is_meaningful_desc:
         overall_score = max(overall_score, 0.90)
-    elif desc_score >= 0.95:
+    elif desc_score >= 0.95 and is_meaningful_desc:
         overall_score = max(overall_score, 0.85)
 
     breakdown = SimilarityBreakdown(
@@ -474,6 +484,19 @@ def compare_skills(s1: Skill, s2: Skill) -> SimilarSkillMatch:
     )
 
 
+class _SkillFeatures:
+    __slots__ = ("all_tokens", "desc_tokens", "files_set", "name_tokens", "skill", "tags_set")
+
+    def __init__(self, skill: Skill) -> None:
+        self.skill = skill
+        self.name_tokens = set(tokenize_name(skill.name))
+        self.desc_tokens = set(tokenize_text(skill.description))
+        self.tags_set = {t.strip().lower() for t in skill.tags if t.strip()}
+        files_list = getattr(skill, "available_files", []) or []
+        self.files_set = {f.split("/")[-1].lower() for f in files_list if f}
+        self.all_tokens = self.name_tokens | self.desc_tokens | self.tags_set
+
+
 def find_similar_skills(
     skills: list[Skill],
     query_skill: str | None = None,
@@ -496,11 +519,17 @@ def find_similar_skills(
     if query_skill:
         # Match only against the specified query skill
         clean_q = query_skill.strip().lower()
+        # 1. Exact name or exact path match
         target_skills = [
-            s
-            for s in skills
-            if s.name.lower() == clean_q or s.path.lower() == clean_q or clean_q in s.path.lower()
+            s for s in skills if s.name.lower() == clean_q or s.path.lower() == clean_q
         ]
+        # 2. Substring in name
+        if not target_skills:
+            target_skills = [s for s in skills if clean_q in s.name.lower()]
+        # 3. Substring in path fallback
+        if not target_skills:
+            target_skills = [s for s in skills if clean_q in s.path.lower()]
+
         if not target_skills:
             return SimilarSkillsResult(
                 target=target,
@@ -517,11 +546,27 @@ def find_similar_skills(
             if match.score >= threshold:
                 matches.append(match)
     else:
+        # Precompute features to prune unpromising pairs for large collections
+        feats = [_SkillFeatures(s) for s in skills]
+
         # Pairwise comparison
         for i in range(n):
+            f1 = feats[i]
             for j in range(i + 1, n):
-                s1, s2 = skills[i], skills[j]
-                match = compare_skills(s1, s2)
+                f2 = feats[j]
+                # If threshold is >= 0.2 and collection is not tiny, prune pairs with zero shared tokens
+                # unless names are close in length and prefix
+                if threshold >= 0.2 and n > 15:
+                    shared_tokens = f1.all_tokens & f2.all_tokens
+                    shared_files = f1.files_set & f2.files_set
+                    name1, name2 = f1.skill.name.lower(), f2.skill.name.lower()
+                    names_similar = name1 == name2 or (
+                        len(name1) >= 4 and len(name2) >= 4 and name1[:4] == name2[:4]
+                    )
+                    if not (shared_tokens or shared_files or names_similar):
+                        continue
+
+                match = compare_skills(f1.skill, f2.skill)
                 if match.score >= threshold:
                     matches.append(match)
 
