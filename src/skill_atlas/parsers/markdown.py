@@ -62,7 +62,7 @@ def parse_skill_markdown(content: str, fallback_name: str = "") -> dict[str, Any
             post = frontmatter.loads(content)
             metadata = dict(post.metadata) if isinstance(post.metadata, dict) else {}
             body = post.content
-        except Exception as err:
+        except Exception as err:  # noqa: BLE001
             parse_error = f"YAML frontmatter parsing failed: {err}"
             # Extract raw body after potential frontmatter closing
             parts = content.split("---", 2)

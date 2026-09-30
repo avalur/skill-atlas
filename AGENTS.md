@@ -43,9 +43,24 @@ skill-atlas/
 - Install dependencies: `uv sync`
 - Run CLI: `uv run skill-atlas --help`
 - Scan directory or repo: `uv run skill-atlas scan ./skills` or `uv run skill-atlas scan https://github.com/org/repo.git`
+- Start local web UI: `uv run skill-atlas serve`
 - Run tests: `uv run pytest -v`
+- Run opt-in real GitHub API tests: `uv run pytest -m network`
 - Run linter: `uv run ruff check .`
-- Run formatter: `uv run ruff format .`
+- Run formatter check: `uv run ruff format --check .`
+- Format code: `uv run ruff format .`
+
+## Specs
+Read `./SPEC.md` first. Update it in the same change as the code.
+
+## Tests
+Integration tests for every case in the spec (every rule, every CLI option, every exit code, every corner-case layout in SPEC §3.3).
+
+## Definition of Done
+- All tests pass locally: `uv run pytest`
+- Lint and format are clean: `uv run ruff check . && uv run ruff format --check .`
+- Pushed; CI is green for this commit
+- Red CI: read the logs (`gh run view --log-failed`), fix, push again
 
 ## Conventions for AI Agents
 1. **Rule Modularity**: Every validation or security rule must be an isolated class/function with a unique identifier (e.g., `SEC-001`, `SCH-002`), a severity level (`INFO`, `WARN`, `ERROR`), a clear message, and an actionable remediation suggestion.

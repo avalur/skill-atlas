@@ -38,7 +38,7 @@ def _collect_skill_files(skill_dir: Path) -> tuple[list[str], dict[str, str]]:
                     resolved_target = abs_f.resolve()
                     if not resolved_target.is_relative_to(resolved_skill_dir):
                         continue
-                except Exception:
+                except (OSError, RuntimeError, ValueError):
                     continue
 
             try:
@@ -56,7 +56,7 @@ def _collect_skill_files(skill_dir: Path) -> tuple[list[str], dict[str, str]]:
                         if b"\x00" not in chunk:
                             bf.seek(0)
                             contents[rel_path] = bf.read().decode("utf-8", errors="replace")
-            except Exception:
+            except (OSError, UnicodeDecodeError):
                 pass
 
     return files, contents
@@ -68,8 +68,7 @@ def _collect_git_repo_files(repo_root: Path) -> list[str]:
         res = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
             cwd=repo_root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=15,
             env={"GIT_TERMINAL_PROMPT": "0", **os.environ},
@@ -77,7 +76,7 @@ def _collect_git_repo_files(repo_root: Path) -> list[str]:
         )
         if res.returncode == 0:
             return [line.strip() for line in res.stdout.splitlines() if line.strip()]
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
     return []
 
@@ -119,7 +118,7 @@ def discover_local_skills(target_path: Path) -> list[Skill]:
 
         try:
             raw_content = manifest.read_text(encoding="utf-8")
-        except Exception as err:
+        except (OSError, UnicodeDecodeError) as err:
             raw_content = None
             parse_info = {
                 "name": fallback_name,

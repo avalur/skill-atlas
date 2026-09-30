@@ -1,14 +1,10 @@
 """Remote Git repository discovery for AI Agent Skills."""
 
-import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 
 import httpx
 
-from skill_atlas.discovery.local import discover_local_skills
-from skill_atlas.git.client import GIT_ENV, parse_github_url
+from skill_atlas.git.client import parse_github_url
 from skill_atlas.git.github import GitHubClient
 from skill_atlas.models import Skill
 from skill_atlas.parsers.markdown import parse_skill_markdown
@@ -144,147 +140,10 @@ def _discover_via_github_api(owner: str, repo: str, original_url: str) -> list[S
     return skills
 
 
-def _discover_via_git_clone(url: str) -> list[Skill]:
-    """Lightweight discovery using blobless clone with no checkout."""
-    if url.startswith("-"):
-        raise ValueError(f"Invalid target URL: '{url}'")
-
-    tmp_dir = tempfile.mkdtemp(prefix="skill_atlas_clone_")
-    try:
-        # 1. Blobless shallow clone without checkout (downloads only ~5MB)
-        clone_cmd = [
-            "git",
-            "clone",
-            "--depth",
-            "1",
-            "--filter=blob:none",
-            "--no-checkout",
-            "--",
-            url,
-            tmp_dir,
-        ]
-        clone_res = subprocess.run(
-            clone_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=60,
-            env=GIT_ENV,
-            check=False,
-        )
-        if clone_res.returncode != 0:
-            # Fallback if blob filter is not supported by Git server
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            Path(tmp_dir).mkdir(parents=True, exist_ok=True)
-            fallback_cmd = [
-                "git",
-                "clone",
-                "--no-checkout",
-                "--",
-                url,
-                tmp_dir,
-            ]
-            fallback_res = subprocess.run(
-                fallback_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=60,
-                env=GIT_ENV,
-                check=False,
-            )
-            if fallback_res.returncode != 0:
-                err_msg = (
-                    fallback_res.stderr.strip()
-                    or clone_res.stderr.strip()
-                    or "Failed to clone repository"
-                )
-                raise RuntimeError(f"Git clone failed: {err_msg}")
-
-        # 2. Inspect tree directly without checking out files
-        tree_res = subprocess.run(
-            ["git", "ls-tree", "-r", "HEAD", "--name-only"],
-            cwd=tmp_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=15,
-            env=GIT_ENV,
-            check=False,
-        )
-        all_tree_files = [line.strip() for line in tree_res.stdout.splitlines() if line.strip()]
-        manifest_paths = [
-            p
-            for p in all_tree_files
-            if p.endswith("/SKILL.md") or p == "SKILL.md" or p.endswith("/skill.md")
-        ]
-
-        if not manifest_paths:
-            return []
-
-        # 3. Checkout ONLY the detected skill directories
-        skill_dirs = list(
-            {str(Path(p).parent) for p in manifest_paths if "/" in p}
-            | {p for p in manifest_paths if "/" not in p}
-        )
-        subprocess.run(
-            ["git", "checkout", "HEAD", "--"] + skill_dirs,
-            cwd=tmp_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30,
-            env=GIT_ENV,
-            check=False,
-        )
-
-        # 4. Discover skills locally from the checked out directories
-        skills = discover_local_skills(Path(tmp_dir))
-
-        # 5. Normalize repo metadata
-        gh_match = parse_github_url(url)
-        orig_repo_name = f"{gh_match[0]}/{gh_match[1]}" if gh_match else Path(url.rstrip("/")).stem
-        canonical_url = f"https://github.com/{gh_match[0]}/{gh_match[1]}" if gh_match else url
-
-        # Attempt to enrich introductory commit provenance via GitHub API if available
-        if gh_match:
-            gh_client = GitHubClient()
-            with httpx.Client(timeout=10.0) as http_client:
-                for skill in skills:
-                    skill.repo_name = orig_repo_name
-                    skill.repo_url = canonical_url
-                    skill.repo_files = all_tree_files
-                    manifest_rel = f"{skill.path}/SKILL.md" if skill.path != "." else "SKILL.md"
-                    try:
-                        api_sha, api_date = gh_client.fetch_file_provenance(
-                            http_client, gh_match[0], gh_match[1], manifest_rel
-                        )
-                        if api_sha:
-                            skill.commit = api_sha
-                            skill.commit_date = api_date
-                    except Exception:
-                        pass
-        else:
-            for skill in skills:
-                skill.repo_name = orig_repo_name
-                skill.repo_url = canonical_url
-                skill.repo_files = all_tree_files
-
-        return skills
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
 def discover_remote_skills(url: str) -> list[Skill]:
-    """Discover skills in a remote Git repository using hybrid API + lightweight clone."""
+    """Discover skills in a remote Git repository using GitHub REST API and raw downloads."""
     gh_match = parse_github_url(url)
-    if gh_match:
-        owner, repo = gh_match
-        try:
-            skills = _discover_via_github_api(owner, repo, url)
-            if skills:
-                return skills
-        except Exception:
-            pass
-
-    return _discover_via_git_clone(url)
+    if not gh_match:
+        raise ValueError(f"Only GitHub repositories are supported for remote scans: '{url}'")
+    owner, repo = gh_match
+    return _discover_via_github_api(owner, repo, url)

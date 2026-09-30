@@ -1,7 +1,7 @@
 """Static security auditing rules for AI Agent Skills."""
 
 import re
-from typing import NamedTuple
+from typing import ClassVar, NamedTuple
 
 from skill_atlas.models import Finding, Severity, Skill
 from skill_atlas.rules.base import Rule
@@ -74,7 +74,7 @@ class HardcodedSecretRule(Rule):
     category = "security"
     description = "Exposed secrets, tokens, or private keys detected in skill files"
 
-    _PATTERNS = [
+    _PATTERNS: ClassVar[list[PatternDefinition]] = [
         PatternDefinition(
             "OpenAI/Anthropic API Key",
             re.compile(r"\b(sk-[a-zA-Z0-9_-]{20,}|sk-ant-[a-zA-Z0-9_-]{20,})\b"),
@@ -126,7 +126,7 @@ class DangerousCommandRule(Rule):
     category = "security"
     description = "Destructive or critical system modification commands detected"
 
-    _PATTERNS = [
+    _PATTERNS: ClassVar[list[PatternDefinition]] = [
         PatternDefinition(
             "Destructive root deletion",
             re.compile(
@@ -166,7 +166,7 @@ class UnsafeNetworkExecutionRule(Rule):
     category = "security"
     description = "Unverified pipe to shell from remote download (curl | bash, wget | sh)"
 
-    _PATTERNS = [
+    _PATTERNS: ClassVar[list[PatternDefinition]] = [
         PatternDefinition(
             "Unsafe pipe to shell",
             re.compile(r"\b(curl|wget)\b[^\n|]+\|\s*(sudo\s+)?(ba|z)?sh\b"),
@@ -200,7 +200,7 @@ class SensitivePathAccessRule(Rule):
     category = "security"
     description = "Access to sensitive system or credential paths (/etc/shadow, ~/.ssh, ~/.aws)"
 
-    _PATTERNS = [
+    _PATTERNS: ClassVar[list[PatternDefinition]] = [
         PatternDefinition(
             "Sensitive path access",
             re.compile(r"(/etc/shadow|/etc/passwd|~?/\.ssh(/|\b)|~?/\.aws(/|\b)|~?/\.gnupg(/|\b))"),
@@ -226,7 +226,7 @@ class PromptInjectionRule(Rule):
     category = "security"
     description = "Prompt injection or instruction override patterns detected"
 
-    _PATTERNS = [
+    _PATTERNS: ClassVar[list[PatternDefinition]] = [
         PatternDefinition(
             "Prompt injection pattern",
             re.compile(

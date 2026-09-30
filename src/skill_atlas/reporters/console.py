@@ -69,7 +69,7 @@ class ConsoleReporter:
                     elif f.severity == Severity.WARN:
                         icon = "⚠️  [bold yellow][WARN][/bold yellow] "
                     else:
-                        icon = "ℹ️  [bold blue][INFO][/bold blue] "
+                        icon = "ℹ️  [bold blue][INFO][/bold blue] "  # noqa: RUF001
 
                     loc = ""
                     if f.file:

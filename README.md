@@ -1,5 +1,7 @@
 # Skill Atlas
 
+[![CI](https://github.com/avalur/skill-atlas/actions/workflows/ci.yml/badge.svg)](https://github.com/avalur/skill-atlas/actions/workflows/ci.yml)
+
 > CLI tool for discovery, structural validation, and static security audit of AI Agent Skills.
 
 ## 🎯 Project Purpose

@@ -1,6 +1,6 @@
 """Data models for Skill Atlas."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from skill_atlas import __version__
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     ERROR = "ERROR"
     WARN = "WARN"
     INFO = "INFO"

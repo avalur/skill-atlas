@@ -26,15 +26,14 @@ def is_git_repository(path: Path) -> bool:
         res = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
             cwd=str(path if path.is_dir() else path.parent),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=15,
             env=GIT_ENV,
             check=False,
         )
         return res.returncode == 0 and res.stdout.strip() == "true"
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -46,8 +45,7 @@ def get_repo_info(path: Path) -> tuple[Path | None, str | None, str | None]:
         root_res = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             cwd=str(dir_path),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=15,
             env=GIT_ENV,
@@ -62,8 +60,7 @@ def get_repo_info(path: Path) -> tuple[Path | None, str | None, str | None]:
         url_res = subprocess.run(
             ["git", "config", "--get", "remote.origin.url"],
             cwd=str(repo_root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=15,
             env=GIT_ENV,
@@ -85,7 +82,7 @@ def get_repo_info(path: Path) -> tuple[Path | None, str | None, str | None]:
             repo_name = repo_root.name
 
         return repo_root, repo_name, repo_url
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None, None, None
 
 
@@ -104,8 +101,7 @@ def get_file_provenance(repo_root: Path, file_rel_path: str) -> tuple[str | None
                 file_rel_path,
             ],
             cwd=str(repo_root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=30,
             env=GIT_ENV,
@@ -126,8 +122,7 @@ def get_file_provenance(repo_root: Path, file_rel_path: str) -> tuple[str | None
                     file_rel_path,
                 ],
                 cwd=str(repo_root),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 timeout=30,
                 env=GIT_ENV,
@@ -145,5 +140,5 @@ def get_file_provenance(repo_root: Path, file_rel_path: str) -> tuple[str | None
             return commit_hash, commit_date
 
         return None, None
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None, None

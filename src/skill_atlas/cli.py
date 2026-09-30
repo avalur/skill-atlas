@@ -148,7 +148,7 @@ def scan_command(
         raise
     except Exception as err:
         typer.secho(f"Fatal error: {err}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=2) from err
 
 
 if __name__ == "__main__":

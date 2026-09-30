@@ -42,6 +42,7 @@ venv.bak/
 .coverage.*
 nosetests.xml
 coverage.xml
+report.xml
 *.cover
 *.py,cover
 .hypothesis/
@@ -71,4 +72,6 @@ Thumbs.db
 
 # Project temporary outputs
 *.log
+*.output.txt
+.output.txt
 tmp/

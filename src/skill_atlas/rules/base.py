@@ -56,7 +56,7 @@ class RuleRegistry:
                 for f in detected:
                     skill.add_finding(f)
                     findings.append(f)
-            except Exception as err:
+            except Exception as err:  # noqa: BLE001
                 internal_finding = Finding(
                     rule_id=rule.id,
                     severity=Severity.ERROR,
