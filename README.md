@@ -30,6 +30,11 @@ As the number of skills grows, key challenges emerge:
 
 ## 🚀 Features (v0.2.0)
 
+- **Multi-Repository Scanning & Search**:
+  - Scan multiple local directories, local Git repositories, and remote GitHub repositories in a single run.
+  - Ingest target repositories via positional CLI arguments or newline-delimited text files (`--targets-file / -T`).
+  - **Audit-Scoped Search (`--query / -q`)**: Filter skills across all targets before rule evaluation, running security audits specifically on matching skills to maximize scan speed.
+  - Cross-repository isolation preserving individual repository provenance without conflating skills across targets.
 - **Git Repositories & Discovery**:
   - Scanning local directories and local Git repositories.
   - Remote Git repository ingestion directly via GitHub REST API (zero disk waste, no cloning).
@@ -52,7 +57,8 @@ As the number of skills grows, key challenges emerge:
   - Interactive Web UI drawer and card matrix with instant keyword filtering and deterministic replay support.
 - **Interactive Local Web Interface**:
   - Launch an interactive local catalog with `skill-atlas serve` (supporting `--reload` for development).
-  - Pinned real-time status bar reporting exact operations, progress, and rate limit budget.
+  - Multi-repository input textarea, sample repositories loader, and dynamic repository filter chips.
+  - Real-time SSE streaming reporting per-target progress (`[index/total: repo_name]`) and GitHub rate limits.
   - Light and dark theme switcher with system preference detection and localStorage persistence.
   - Interactive "Find Similar" tool with threshold controls, keyword and status filters, and instant JSON download.
 - **Reporting & CI/CD**:
@@ -68,8 +74,14 @@ As the number of skills grows, key challenges emerge:
 # Install dependencies
 uv sync
 
-# Scan local directory or repository
+# Scan single local directory or repository
 uv run skill-atlas scan ./skills
+
+# Scan multiple repositories with an audit-scoped query
+uv run skill-atlas scan ./team-skills ./core-skills -q git
+
+# Scan repositories listed in a targets file
+uv run skill-atlas scan -T targets.txt
 
 # Scan remote GitHub repository without cloning
 uv run skill-atlas scan https://github.com/JetBrains/kotlin

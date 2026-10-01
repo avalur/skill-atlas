@@ -30,11 +30,12 @@ def test_walkthrough_visual_regression(
     page: Page,
     visual_server: str,
     deterministic_visual_repo: Path,
+    deterministic_visual_second_repo: Path,
     visual_paths: dict[str, Path],
     commit_sha: str,
     pytestconfig: pytest.Config,
 ) -> None:
-    """Execute end-to-end walkthrough, capture 5 key moments, and validate against baselines."""
+    """Execute end-to-end walkthrough, capture 6 key moments, and validate against baselines."""
     results: list[VisualDiffResult] = []
 
     def capture_and_compare(screen_name: str) -> VisualDiffResult:
@@ -77,17 +78,19 @@ def test_walkthrough_visual_regression(
     page.wait_for_selector('html[data-theme="dark"]')
 
     # -------------------------------------------------------------
-    # MOMENT 3: Scan Completed Results (Summary metrics, origin chips, list)
+    # MOMENT 3: Scan Completed Results (Multi-repo scan, summary metrics, repo chips, list)
     # -------------------------------------------------------------
-    page.fill("#target-input", str(deterministic_visual_repo))
+    multi_targets = f"{deterministic_visual_repo}\n{deterministic_visual_second_repo}"
+    page.fill("#target-input", multi_targets)
     page.click("#scan-btn")
     page.locator("#summary-section").wait_for(state="visible", timeout=15000)
     page.locator(".skill-item").first.wait_for(state="visible", timeout=10000)
     capture_and_compare("03_scan_completed_results")
 
     # -------------------------------------------------------------
-    # MOMENT 4: Filtered Results (Search 'memory' and Agent Config chip)
+    # MOMENT 4: Filtered Results (Repo chip 'acme/core-skills' + Search 'memory' + Agent Config chip)
     # -------------------------------------------------------------
+    page.click('#repo-chips .chip[data-repo="acme/core-skills"]')
     page.fill("#filter-input", "memory")
     page.wait_for_timeout(250)
     page.click("#chip-agent-config")
@@ -98,6 +101,7 @@ def test_walkthrough_visual_regression(
     # -------------------------------------------------------------
     page.fill("#filter-input", "")
     page.click("#chip-all")
+    page.click("#chip-repo-all")
     page.wait_for_timeout(200)
     page.click("#similar-btn")
     page.locator("#similar-section").wait_for(state="visible", timeout=5000)

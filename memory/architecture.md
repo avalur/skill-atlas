@@ -15,11 +15,14 @@ This document details the architectural choices, component boundaries, and desig
 ```text
                  ┌────────────────────────────────────────────────────────┐
                  │                 skill-atlas CLI / Web UI               │
+                 │                 (TARGET..., -T file, -q query)         │
                  └──────────────────────────┬─────────────────────────────┘
                                             │
                                             ▼
                  ┌────────────────────────────────────────────────────────┐
                  │                 Scanner Orchestrator                   │
+                 │                 - Target Normalization & Deduplication │
+                 │                 - Target Discovery Loop                │
                  └───────┬───────────────────────────────┬────────────────┘
                          │                               │
             Local Target │                  Remote Target│ (https://github.com/...)
@@ -32,6 +35,18 @@ This document details the architectural choices, component boundaries, and desig
                      └───────────────────┬───────────────────┘
                                          ▼
                        ┌───────────────────────────────────┐
+                       │   Query Filter (Audit-Scope)      │
+                       │   - Case-insensitive substring    │
+                       │   - Matches name, desc, path,     │
+                       │     repo_name, and tags           │
+                       └─────────────────┬─────────────────┘
+                                         ▼
+                       ┌───────────────────────────────────┐
+                       │   Deduplication & Drift Check     │
+                       │   (Isolated per repository)       │
+                       └─────────────────┬─────────────────┘
+                                         ▼
+                       ┌───────────────────────────────────┐
                        │   Rule Engine (rules/runner.py)   │
                        │   - Schema: SCH-001..SCH-006      │
                        │   - Security: SEC-001..SEC-005    │
@@ -40,8 +55,16 @@ This document details the architectural choices, component boundaries, and desig
                                          ▼
                        ┌───────────────────────────────────┐
                        │   Reporters (Console / JSON / UI) │
+                       │   - Aggregated ScanResult         │
+                       │   - Target-indexed progress (SSE) │
                        └───────────────────────────────────┘
 ```
+
+### Multi-Target & Audit-Scoped Search
+- **Target Ingestion**: Accepts multiple positional targets on the CLI (`skill-atlas scan TARGET1 TARGET2`), a newline-delimited text file via `--targets-file / -T`, or newline/comma-separated targets in the Web UI textarea.
+- **Audit-Scoped Search (`--query / -q`)**: Discovered skills are filtered *before* running static rule evaluations (`matches_query`). This eliminates expensive rule checks on irrelevant skills, drastically reducing computation and network traffic.
+- **Repository Provenance & Isolation**: Cross-repository skill names are isolated (skills with identical names in separate repositories are not falsely merged as duplicate copies).
+- **Data Contract Compatibility**: `ScanResult` carries `targets: list[str]` and `query: str | None`, while maintaining `target: str` populated with the first target for complete backward compatibility.
 
 ## 3. Remote Scanning Strategy (Zero-Clone)
 Full repository cloning for massive repositories (e.g. `JetBrains/kotlin`) is prohibited because it wastes bandwidth, consumes gigabytes of local storage, and takes minutes.
@@ -54,12 +77,17 @@ Instead, Skill Atlas employs a lightweight API-driven approach:
 
 ## 4. Web Interface & Security
 - **Endpoints**:
-  - `GET /`: Serves the single-page application with responsive dark/light theme.
-  - `POST /api/scans`: Initiates an asynchronous scan and returns a `scan_id`.
-  - `GET /api/scans/{scan_id}/progress`: Server-Sent Events (SSE) streaming real-time stage updates, progress percentage, and GitHub rate limit.
+  - `GET /`: Serves the single-page application with responsive dark/light theme, multi-repository textarea, dynamic repository chips, and instant filtering.
+  - `POST /api/scans`: Initiates an asynchronous scan accepting `targets: list[str]`, legacy `target: str`, and optional `query: str | None`. Returns a `scan_id`.
+  - `GET /api/scans/{scan_id}/events`: Server-Sent Events (SSE) streaming real-time stage updates, multi-repository progress context (`target_index`, `target_total`, `target_name`), progress percentage, and GitHub rate limit.
   - `GET /api/scans/{scan_id}`: Returns complete `ScanResult` JSON.
   - `DELETE /api/scans/{scan_id}`: Cancels an active scan (returns 409 if already completed).
   - `GET /api/scans/{scan_id}/similar`: Computes similarity matches between skills.
+- **Multi-Repository & Filter Interactions**:
+  - Adaptive multi-line textarea accepting newline- or comma-separated repository URLs and directory paths.
+  - Quick sample target loader button (`Load Sample Repos`).
+  - Dynamic repository filter chips (`All Repos (<count>)`, `<repo_name> (<count>)`) automatically populated from scan results.
+  - Unified client-side filter engine combining repository filter chips, origin filter chips, pass/fail status filters, and instant keyword search without page reloads.
 - **Security Protections**:
   - `TrustedHostMiddleware` restricting host header.
   - `Origin` validation rejecting foreign origins.

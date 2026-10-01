@@ -1,5 +1,6 @@
 """Scanner orchestrator coordinating discovery, evaluation, and reporting."""
 
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -22,6 +23,7 @@ from skill_atlas.models import (
     Skill,
     SkillOrigin,
     Stage,
+    matches_query,
     parse_utc_timestamp,
 )
 from skill_atlas.rules import RuleRegistry, create_default_registry
@@ -32,9 +34,20 @@ def is_duplicate_candidate(s1: Skill, s2: Skill) -> bool:
 
     Only mirror copies involving agent-config directories (.claude, .agents, .junie, etc.)
     are considered duplicates. Distinct product or standalone skills in different locations
-    are kept separate.
+    are kept separate. Skills across different repositories are never duplicates.
     """
     if s1.name != s2.name:
+        return False
+    # Cross-repository isolation: skills from different repositories are distinct entities
+    if (s1.repo_name or "") != (s2.repo_name or ""):
+        return False
+    if (s1.repo_url or "") != (s2.repo_url or ""):
+        return False
+    if (
+        s1.repo_root_dir is not None
+        and s2.repo_root_dir is not None
+        and s1.repo_root_dir != s2.repo_root_dir
+    ):
         return False
     if (s1.origin == SkillOrigin.TEST_DATA) != (s2.origin == SkillOrigin.TEST_DATA):
         return False
@@ -111,8 +124,82 @@ def deduplicate_skills(
             f"{num_with_duplicates} skill(s) have duplicates; showing the newest copy",
         )
 
-    deduped.sort(key=lambda s: s.path)
+    deduped.sort(key=lambda s: (s.repo_name or "", s.path))
     return deduped
+
+
+def normalize_targets(
+    targets: str | Path | list[str | Path] | tuple[str | Path, ...] | None = None,
+    target: str | Path | list[str | Path] | tuple[str | Path, ...] | None = None,
+) -> list[str]:
+    """Normalize and deduplicate target paths or URLs, preserving declaration order."""
+    raw_list: list[str | Path] = []
+    if target is not None:
+        if isinstance(target, (list, tuple)):
+            raw_list.extend(target)
+        else:
+            raw_list.append(target)
+    if targets is not None:
+        if isinstance(targets, (list, tuple)):
+            raw_list.extend(targets)
+        else:
+            raw_list.append(targets)
+
+    if not raw_list:
+        return ["."]
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+
+    for item in raw_list:
+        s = str(item).strip()
+        if not s:
+            continue
+        if is_remote_target(s):
+            norm = s.rstrip("/")
+            key = norm
+        else:
+            if s == ".":
+                norm = "."
+                key = "."
+            else:
+                norm = s.rstrip("/\\")
+                if not norm:
+                    norm = "/"
+                try:
+                    key = os.path.normpath(norm)
+                except (ValueError, TypeError):
+                    key = norm
+        if key not in seen:
+            seen.add(key)
+            normalized.append(norm)
+
+    return normalized if normalized else ["."]
+
+
+def parse_targets_file(path: str | Path) -> list[str]:
+    """Parse a targets file containing one target path or Git URL per line.
+
+    Ignores empty lines, leading/trailing whitespace, and comments (lines starting with '#'
+    or trailing inline comments preceded by ' #'). Raises FileNotFoundError if the file
+    does not exist, and ValueError if no valid targets are found.
+    """
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Targets file not found: '{path}'.")
+    content = p.read_text(encoding="utf-8")
+    targets: list[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if " #" in line:
+            line = line.split(" #", 1)[0].strip()
+        if line:
+            targets.append(line)
+    if not targets:
+        raise ValueError(f"Targets file '{path}' contains no valid targets.")
+    return targets
 
 
 class Scanner:
@@ -134,8 +221,11 @@ class Scanner:
 
     def scan(
         self,
-        target: str | Path,
+        targets: str | Path | list[str | Path] | tuple[str | Path, ...] | None = None,
         ref: str | None = None,
+        *,
+        target: str | Path | list[str | Path] | tuple[str | Path, ...] | None = None,
+        query: str | None = None,
         include_test_data: bool | None = None,
         on_progress: ProgressCallback | None = None,
         cancel_event: threading.Event | None = None,
@@ -143,15 +233,14 @@ class Scanner:
         gh_client: GitHubClient | None = None,
         discovery_only: bool = False,
     ) -> ScanResult:
-        """Scan a target path or Git URL for AI Agent Skills."""
-        target_str = str(target)
+        """Scan one or more target paths or Git URLs for AI Agent Skills."""
+        normalized_targets = normalize_targets(targets=targets, target=target)
         t0 = time.time()
         effective_include_test_data = (
             self.include_test_data if include_test_data is None else include_test_data
         )
-        effective_gh_client = gh_client or (
-            GitHubClient() if is_remote_target(target_str) else None
-        )
+        has_remote = any(is_remote_target(t) for t in normalized_targets)
+        effective_gh_client = gh_client or (GitHubClient() if has_remote else None)
         scan_warnings: list[str] = []
 
         def emit(
@@ -160,6 +249,9 @@ class Scanner:
             current: int | None = None,
             total: int | None = None,
             skill_path: str | None = None,
+            target_index: int | None = None,
+            target_total: int | None = None,
+            target_name: str | None = None,
         ) -> None:
             if on_progress:
                 rate_remaining = (
@@ -173,6 +265,9 @@ class Scanner:
                     skill_path=skill_path,
                     rate_limit_remaining=rate_remaining,
                     elapsed_ms=int((time.time() - t0) * 1000),
+                    target_index=target_index,
+                    target_total=target_total,
+                    target_name=target_name,
                 )
                 on_progress(event)
 
@@ -180,29 +275,85 @@ class Scanner:
             if cancel_event and cancel_event.is_set():
                 raise RuntimeError("Scan cancelled by user")
 
-        try:
-            # 1. Discover skills
-            check_cancel()
-            if is_remote_target(target_str):
-                raw_skills = discover_remote_skills(
-                    url=target_str,
-                    ref=ref,
-                    gh_client=effective_gh_client,
-                    http_client=http_client,
-                    on_progress=on_progress,
-                    cancel_event=cancel_event,
-                    discovery_only=discovery_only,
-                    warnings=scan_warnings,
+        def make_target_progress(idx: int, name: str, prefix: str) -> ProgressCallback:
+            def _progress(event: ProgressEvent) -> None:
+                if event.target_index is None:
+                    event.target_index = idx
+                    event.target_total = total_targets
+                    event.target_name = name
+                    if total_targets > 1 and not event.message.startswith(prefix):
+                        event.message = f"{prefix}{event.message}"
+                if on_progress:
+                    on_progress(event)
+
+            return _progress
+
+        def make_target_emit(idx: int, name: str, prefix: str) -> Callable[[Stage, str], None]:
+            def _emit_fn(stage: Stage, msg: str) -> None:
+                emit(
+                    stage,
+                    f"{prefix}{msg}",
+                    target_index=idx,
+                    target_total=total_targets,
+                    target_name=name,
                 )
+
+            return _emit_fn
+
+        try:
+            # 1. Discover skills across all targets
+            total_targets = len(normalized_targets)
+            all_discovered_skills: list[Skill] = []
+
+            for target_idx, target_str in enumerate(normalized_targets, start=1):
+                check_cancel()
+                target_prefix = f"[{target_idx}/{total_targets}] " if total_targets > 1 else ""
+
+                if is_remote_target(target_str):
+                    target_progress = make_target_progress(target_idx, target_str, target_prefix)
+                    raw_skills = discover_remote_skills(
+                        url=target_str,
+                        ref=ref,
+                        gh_client=effective_gh_client,
+                        http_client=http_client,
+                        on_progress=target_progress if on_progress else None,
+                        cancel_event=cancel_event,
+                        discovery_only=discovery_only,
+                        warnings=scan_warnings,
+                    )
+                else:
+                    emit(
+                        Stage.VALIDATE,
+                        f"{target_prefix}Validating local path {target_str}...",
+                        target_index=target_idx,
+                        target_total=total_targets,
+                        target_name=target_str,
+                    )
+                    emit(
+                        Stage.DISCOVER,
+                        f"{target_prefix}Searching for skills in {target_str}...",
+                        target_index=target_idx,
+                        target_total=total_targets,
+                        target_name=target_str,
+                    )
+                    raw_skills = discover_local_skills(Path(target_str))
+
+                check_cancel()
+
+                # Deduplicate within this target boundary (cross-repository isolation)
+                target_emit_fn = make_target_emit(target_idx, target_str, target_prefix)
+                deduped_target_skills = deduplicate_skills(raw_skills, emit_fn=target_emit_fn)
+                all_discovered_skills.extend(deduped_target_skills)
+
+            # 2. Audit-scope filtering by query before rule evaluation
+            clean_query = query.strip() if (query and query.strip()) else None
+            if clean_query:
+                skills = [s for s in all_discovered_skills if matches_query(s, clean_query)]
             else:
-                emit(Stage.VALIDATE, f"Validating local path {target_str}...")
-                emit(Stage.DISCOVER, f"Searching for skills in {target_str}...")
-                raw_skills = discover_local_skills(Path(target_str))
+                skills = all_discovered_skills
 
-            check_cancel()
-
-            # 2. Deduplicate duplicate skills
-            skills = deduplicate_skills(raw_skills, emit_fn=emit)
+            # Deterministic sorting across repositories: repo_name ascending, then path ascending
+            skills.sort(key=lambda s: (s.repo_name or "", s.path))
 
             # 3. Evaluate rules on each unique displayed skill (and audit all duplicates)
             error_count = 0
@@ -315,9 +466,13 @@ class Scanner:
                 f"Done: {total} skill(s), {failed} failed, {error_count + warn_count + info_count} finding(s)",
             )
 
+            primary_target = normalized_targets[0] if normalized_targets else ""
+
             return ScanResult(
                 version=__version__,
-                target=target_str,
+                target=primary_target,
+                targets=normalized_targets,
+                query=clean_query,
                 summary=summary,
                 skills=skills,
                 warnings=scan_warnings,

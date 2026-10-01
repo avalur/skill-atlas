@@ -57,6 +57,7 @@ dmypy.json
 # IDE & Editors
 .idea/
 .vscode/
+.junie/
 *.swp
 *.swo
 *~
@@ -77,6 +78,7 @@ Thumbs.db
 tmp/
 sbx-*.sh
 artifacts/
+tests/visual/out/
 *.webm
 *.mp4
 !docs/assets/*.mp4

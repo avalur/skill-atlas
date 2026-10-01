@@ -25,7 +25,7 @@ from skill_atlas.models import (
     SkillOrigin,
     Stage,
 )
-from skill_atlas.scanner import Scanner
+from skill_atlas.scanner import Scanner, normalize_targets
 from skill_atlas.similarity import SimilarSkillMatch, SimilarSkillsResult, find_similar_skills
 
 HTML_CONTENT = """<!DOCTYPE html>
@@ -126,14 +126,18 @@ HTML_CONTENT = """<!DOCTYPE html>
   <div class="container">
     <div class="card">
       <div class="form-group">
-        <label style="font-weight:600; margin-bottom: 0.4rem; display:block;">Repository or Folder</label>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+          <label style="font-weight:600; display:block;" for="target-input">Repository or Folder</label>
+          <button type="button" id="load-sample-btn" onclick="loadSampleMultiTargets()" style="background:none; border:none; color:var(--primary); font-size:0.8rem; font-weight:500; cursor:pointer;" title="Load sample repositories">Load Sample Repos</button>
+        </div>
         <div class="input-row">
-          <input type="text" id="target-input" placeholder="https://github.com/JetBrains/kotlin" value="https://github.com/JetBrains/kotlin">
-          <button id="scan-btn" class="btn-primary" onclick="startScan()">Scan</button>
+          <textarea id="target-input" rows="2" placeholder="https://github.com/JetBrains/kotlin&#10;https://github.com/modelcontextprotocol/servers" style="flex:1; padding:0.6rem 0.8rem; border:1px solid var(--border); border-radius:0.375rem; background:var(--bg); color:var(--text); font-size:0.95rem; font-family:inherit; resize:vertical; min-height:42px; line-height:1.4;">https://github.com/JetBrains/kotlin</textarea>
+          <button id="scan-btn" class="btn-primary" onclick="startScan()" style="align-self:stretch;">Scan</button>
         </div>
       </div>
       <div class="options-row">
-        <label>Ref: <input type="text" id="ref-input" placeholder="default" style="width:100px; padding:0.2rem 0.4rem;"></label>
+        <label>Query: <input type="text" id="query-input" placeholder="e.g. git" style="width:110px; padding:0.2rem 0.4rem;"></label>
+        <label>Ref: <input type="text" id="ref-input" placeholder="default" style="width:90px; padding:0.2rem 0.4rem;"></label>
         <label>Fail On:
           <select id="fail-on-select" style="padding:0.2rem 0.4rem;">
             <option value="error">Error</option>
@@ -170,12 +174,21 @@ HTML_CONTENT = """<!DOCTYPE html>
           <button class="btn-secondary" onclick="downloadJson()">Download JSON</button>
         </div>
       </div>
-      <div class="filter-chips">
-        <div class="chip active" id="chip-all" onclick="setOriginFilter('all', event)">All (<span id="count-all">0</span>)</div>
-        <div class="chip" id="chip-agent-config" onclick="setOriginFilter('agent-config', event)">Agent Config (<span id="count-agent-config">0</span>)</div>
-        <div class="chip" id="chip-product" onclick="setOriginFilter('product', event)">Product (<span id="count-product">0</span>)</div>
-        <div class="chip" id="chip-standalone" onclick="setOriginFilter('standalone', event)">Standalone (<span id="count-standalone">0</span>)</div>
-        <div class="chip" id="chip-test-data" onclick="setOriginFilter('test-data', event)">Test Data (<span id="count-test-data">0</span>)</div>
+      <div id="repo-filter-section" style="margin-bottom:0.75rem; display:none;">
+        <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin-bottom:0.35rem;">Repositories</div>
+        <div class="filter-chips" id="repo-chips">
+          <div class="chip active" id="chip-repo-all" onclick="setRepoFilter('all', event)">All Repos (<span id="count-repo-all">0</span>)</div>
+        </div>
+      </div>
+      <div id="origin-filter-section" style="margin-bottom:1rem;">
+        <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin-bottom:0.35rem;">Origins</div>
+        <div class="filter-chips" id="origin-chips">
+          <div class="chip active" id="chip-all" onclick="setOriginFilter('all', event)">All (<span id="count-all">0</span>)</div>
+          <div class="chip" id="chip-agent-config" onclick="setOriginFilter('agent-config', event)">Agent Config (<span id="count-agent-config">0</span>)</div>
+          <div class="chip" id="chip-product" onclick="setOriginFilter('product', event)">Product (<span id="count-product">0</span>)</div>
+          <div class="chip" id="chip-standalone" onclick="setOriginFilter('standalone', event)">Standalone (<span id="count-standalone">0</span>)</div>
+          <div class="chip" id="chip-test-data" onclick="setOriginFilter('test-data', event)">Test Data (<span id="count-test-data">0</span>)</div>
+        </div>
       </div>
       <div class="filter-row">
         <input type="text" id="filter-input" class="filter-input" placeholder="Filter skills by words in name or description..." oninput="renderSkills()">
@@ -259,8 +272,16 @@ HTML_CONTENT = """<!DOCTYPE html>
     let eventSource = null;
     let scanResult = null;
     let activeFilter = 'all';
+    let activeRepoFilter = 'all';
     let activeStatusFilter = 'all';
     let currentSimilarQuery = null;
+
+    function loadSampleMultiTargets() {
+      const input = document.getElementById('target-input');
+      if (input) {
+        input.value = "https://github.com/JetBrains/kotlin\\nhttps://github.com/modelcontextprotocol/servers";
+      }
+    }
 
     function initTheme() {
       const saved = localStorage.getItem('skill-atlas-theme');
@@ -311,8 +332,13 @@ HTML_CONTENT = """<!DOCTYPE html>
     checkHealth();
 
     async function startScan() {
-      const target = document.getElementById('target-input').value.trim();
-      if (!target) return;
+      const targetVal = document.getElementById('target-input').value.trim();
+      if (!targetVal) return;
+      const targets = targetVal.split(/[\\r\\n,]+/).map(t => t.trim()).filter(Boolean);
+      if (targets.length === 0) return;
+
+      const queryInput = document.getElementById('query-input');
+      const query = queryInput ? (queryInput.value.trim() || null) : null;
       const ref = document.getElementById('ref-input').value.trim() || null;
       const failOn = document.getElementById('fail-on-select').value;
       const rules = document.getElementById('rules-select').value;
@@ -329,12 +355,15 @@ HTML_CONTENT = """<!DOCTYPE html>
         document.getElementById('status-filter-select').value = 'all';
       }
       activeFilter = 'all';
+      activeRepoFilter = 'all';
       activeStatusFilter = 'all';
       currentSimilarQuery = null;
 
-      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      document.querySelectorAll('#origin-chips .chip').forEach(c => c.classList.remove('active'));
       const chipAll = document.getElementById('chip-all');
       if (chipAll) chipAll.classList.add('active');
+      const chipRepoAll = document.getElementById('chip-repo-all');
+      if (chipRepoAll) chipRepoAll.classList.add('active');
 
       document.getElementById('summary-section').style.display = 'none';
       document.getElementById('similar-section').style.display = 'none';
@@ -351,7 +380,9 @@ HTML_CONTENT = """<!DOCTYPE html>
             'X-SkillAtlas-Token': CSRF_TOKEN
           },
           body: JSON.stringify({
-            target: target,
+            targets: targets,
+            target: targets[0] || '',
+            query: query,
             ref: ref,
             fail_on: failOn,
             rules: rules,
@@ -381,7 +412,16 @@ HTML_CONTENT = """<!DOCTYPE html>
 
       eventSource.onmessage = (e) => {
         const ev = JSON.parse(e.data);
-        document.getElementById('status-text').textContent = ev.message;
+        let msg = ev.message;
+        if (ev.target_index != null && ev.target_total != null && ev.target_total > 1) {
+          const rawPrefix = `[${ev.target_index}/${ev.target_total}] `;
+          if (msg.startsWith(rawPrefix)) {
+            msg = msg.slice(rawPrefix.length);
+          }
+          const targetPrefix = ev.target_name ? `[${ev.target_index}/${ev.target_total}: ${ev.target_name}] ` : rawPrefix;
+          msg = targetPrefix + msg;
+        }
+        document.getElementById('status-text').textContent = msg;
 
         if (ev.current != null && ev.total != null && ev.total > 0) {
           document.getElementById('progress-container').style.display = 'block';
@@ -442,9 +482,23 @@ HTML_CONTENT = """<!DOCTYPE html>
       renderSkills();
     }
 
+    function setRepoFilter(repo, evt) {
+      activeRepoFilter = repo;
+      const repoContainer = document.getElementById('repo-chips');
+      if (repoContainer) {
+        repoContainer.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      }
+      const chip = evt ? (evt.currentTarget || evt.target.closest('.chip')) : null;
+      if (chip) {
+        chip.classList.add('active');
+      }
+      renderSkills();
+    }
+
     function setOriginFilter(origin, evt) {
       activeFilter = origin;
-      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      const originContainer = document.getElementById('origin-chips') || document;
+      originContainer.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
       const chip = evt ? (evt.currentTarget || evt.target.closest('.chip')) : (window.event ? (window.event.currentTarget || window.event.target.closest('.chip')) : null);
       if (chip) {
         chip.classList.add('active');
@@ -459,17 +513,55 @@ HTML_CONTENT = """<!DOCTYPE html>
         document.getElementById('initial-hint').style.display = 'none';
       }
       const s = scanResult.summary;
+      const targetCount = (scanResult.targets && scanResult.targets.length > 1) ? scanResult.targets.length : 0;
+      const targetStr = targetCount > 1 ? ` across ${targetCount} targets` : '';
       document.getElementById('summary-headline').textContent =
-        `Scanned ${s.total_skills} skills · ${s.passed} passed · ${s.failed} failed`;
+        `Scanned ${s.total_skills} skills${targetStr} · ${s.passed} passed · ${s.failed} failed`;
       const f = s.findings_count;
+      const queryStr = scanResult.query ? `Query: '${scanResult.query}' · ` : '';
       document.getElementById('summary-sub').textContent =
-        `${f.error} errors · ${f.warn} warnings · ${f.info} info`;
+        `${queryStr}${f.error} errors · ${f.warn} warnings · ${f.info} info`;
 
       document.getElementById('count-all').textContent = s.total_skills;
       document.getElementById('count-agent-config').textContent = s.by_origin['agent-config'] || 0;
       document.getElementById('count-product').textContent = s.by_origin['product'] || 0;
       document.getElementById('count-standalone').textContent = s.by_origin['standalone'] || 0;
       document.getElementById('count-test-data').textContent = s.by_origin['test-data'] || 0;
+
+      // Populate dynamic repo chips
+      const repoMap = {};
+      let totalRepoSkills = 0;
+      for (const sk of scanResult.skills) {
+        const repo = sk.repo_name || 'local';
+        repoMap[repo] = (repoMap[repo] || 0) + 1;
+        totalRepoSkills++;
+      }
+      const repoNames = Object.keys(repoMap).sort();
+      const repoSection = document.getElementById('repo-filter-section');
+      const repoChipsContainer = document.getElementById('repo-chips');
+      if (repoSection && repoChipsContainer) {
+        if (repoNames.length > 0) {
+          repoSection.style.display = 'block';
+          repoChipsContainer.innerHTML = '';
+          const allChip = document.createElement('div');
+          allChip.className = 'chip' + (activeRepoFilter === 'all' ? ' active' : '');
+          allChip.id = 'chip-repo-all';
+          allChip.onclick = (e) => setRepoFilter('all', e);
+          allChip.innerHTML = `All Repos (<span id="count-repo-all">${totalRepoSkills}</span>)`;
+          repoChipsContainer.appendChild(allChip);
+
+          for (const repo of repoNames) {
+            const chip = document.createElement('div');
+            chip.className = 'chip' + (activeRepoFilter === repo ? ' active' : '');
+            chip.setAttribute('data-repo', repo);
+            chip.onclick = (e) => setRepoFilter(repo, e);
+            chip.textContent = `${repo} (${repoMap[repo]})`;
+            repoChipsContainer.appendChild(chip);
+          }
+        } else {
+          repoSection.style.display = 'none';
+        }
+      }
 
       renderSkills();
     }
@@ -484,6 +576,12 @@ HTML_CONTENT = """<!DOCTYPE html>
       const filterWords = filterText ? filterText.split(/\\s+/).filter(Boolean) : [];
 
       const filtered = scanResult.skills.filter(sk => {
+        if (activeRepoFilter !== 'all') {
+          const repo = sk.repo_name || 'local';
+          if (repo !== activeRepoFilter) {
+            return false;
+          }
+        }
         if (activeFilter !== 'all' && sk.origin !== activeFilter) {
           return false;
         }
@@ -499,7 +597,8 @@ HTML_CONTENT = """<!DOCTYPE html>
           const descLower = (sk.description || '').toLowerCase();
           const tagsLower = (sk.tags || []).join(' ').toLowerCase();
           const pathLower = (sk.path || '').toLowerCase();
-          const combined = `${nameLower} ${descLower} ${tagsLower} ${pathLower}`;
+          const repoLower = (sk.repo_name || '').toLowerCase();
+          const combined = `${nameLower} ${descLower} ${tagsLower} ${pathLower} ${repoLower}`;
           const matches = filterWords.every(w => combined.includes(w));
           if (!matches) {
             return false;
@@ -509,7 +608,7 @@ HTML_CONTENT = """<!DOCTYPE html>
       });
 
       if (filtered.length === 0) {
-        const hasFilters = filterWords.length > 0 || activeFilter !== 'all' || activeStatusFilter !== 'all';
+        const hasFilters = filterWords.length > 0 || activeFilter !== 'all' || activeRepoFilter !== 'all' || activeStatusFilter !== 'all';
         const msg = hasFilters
           ? 'No skills matching the filter.'
           : (activeFilter !== 'all' ? 'No skills in this category.' : 'No skills found.');
@@ -581,6 +680,11 @@ HTML_CONTENT = """<!DOCTYPE html>
         const pSpan = document.createElement('span');
         pSpan.textContent = `Path: ${sk.path}`;
         meta.appendChild(pSpan);
+        if (sk.repo_name) {
+          const rSpan = document.createElement('span');
+          rSpan.textContent = `Repo: ${sk.repo_name}`;
+          meta.appendChild(rSpan);
+        }
         if (sk.updated_date) {
           const uSpan = document.createElement('span');
           uSpan.textContent = `Updated: ${sk.updated_date}`;
@@ -924,7 +1028,9 @@ HTML_CONTENT = """<!DOCTYPE html>
 
 
 class ScanRequest(BaseModel):
-    target: str
+    target: str = ""
+    targets: list[str] = Field(default_factory=list)
+    query: str | None = None
     ref: str | None = None
     fail_on: Literal["error", "warn"] = "error"
     rules: Literal["all", "schema", "security", "discovery"] = "all"
@@ -1004,9 +1110,13 @@ class JobManager:
                         continue
                     job.status = "running"
                 try:
+                    effective_targets = job.request.targets or (
+                        [job.request.target] if job.request.target else ["."]
+                    )
                     res = scanner.scan(
-                        target=job.request.target,
+                        targets=effective_targets,
                         ref=job.request.ref,
+                        query=job.request.query,
                         include_test_data=job.request.include_test_data,
                         on_progress=job.add_event,
                         cancel_event=job.cancel_event,
@@ -1107,16 +1217,39 @@ def create_app(
             if tok != app.state.csrf_token:
                 raise HTTPException(status_code=403, detail="Invalid CSRF token")
 
-        target = req.target.strip()
+        raw_targets: list[str] = []
+        if req.targets:
+            raw_targets.extend(req.targets)
+        if req.target:
+            raw_targets.append(req.target)
+
+        parsed_targets: list[str] = []
+        for item in raw_targets:
+            for line in str(item).splitlines():
+                for part in line.split(","):
+                    cleaned = part.strip()
+                    if cleaned:
+                        parsed_targets.append(cleaned)
+
+        if not parsed_targets:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="At least one target repository or directory must be provided",
+            )
+
+        effective_targets = normalize_targets(parsed_targets)
+
         # Input validation per SPEC
-        is_gh = parse_github_url(target) is not None
-        if not is_gh:
-            # Check if local path
-            if not allow_local:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Only GitHub repository URLs are supported for scanning",
-                )
+        if not allow_local:
+            for t in effective_targets:
+                if parse_github_url(t) is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Only GitHub repository URLs are supported for scanning",
+                    )
+
+        req.targets = effective_targets
+        req.target = effective_targets[0] if effective_targets else ""
 
         job = manager.create_job(req)
         scan_to_use = scanner or Scanner(

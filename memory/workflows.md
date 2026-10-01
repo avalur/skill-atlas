@@ -69,8 +69,8 @@ Visual regression testing protects the Skill Atlas Web UI against CSS breakages,
 - **Test Suite**: Automated deterministic Playwright walkthrough (`tests/visual/test_walkthrough_screens.py`) capturing 6 key moments:
   1. `01_initial_dashboard` (clean landing state in dark theme)
   2. `02_light_theme` (toggled light mode styling across all controls)
-  3. `03_scan_completed_results` (summary cards, skill list, origin badges, findings)
-  4. `04_filtered_results` (keyword search filter 'memory' and origin chip active)
+  3. `03_scan_completed_results` (multi-repo scan results, summary metrics across targets, dynamic repository chips `acme/core-skills` and `acme/infra-skills`, skill cards)
+  4. `04_filtered_results` (repository chip 'acme/core-skills' active combined with keyword search filter 'memory' and origin chip)
   5. `05_similar_skills_panel` (similarity drawer open with match breakdowns and threshold)
   6. `06_skill_map_panel` (Skill Map cluster cards grid and method selector active)
 - **Local Run**:
@@ -113,3 +113,20 @@ Generating thematic and semantic skill maps:
   # Replay recorded answer:
   uv run skill-atlas map ./skills --jev --replay tests/fixtures/recorded_jev_map_visual.json
   ```
+
+## 7. Multi-Repository & Audit-Scoped Search Workflow
+Scanning and auditing agent skills across multiple repositories and directories:
+- **Multiple Positional Targets**:
+  ```bash
+  uv run skill-atlas scan ./team-skills ./core-skills https://github.com/JetBrains/kotlin
+  ```
+- **Targets File Ingestion (`-T` / `--targets-file`)**:
+  ```bash
+  uv run skill-atlas scan -T targets.txt
+  ```
+  The targets file supports `#` comments, inline comments (`path # comment`), and blank lines.
+- **Audit-Scoped Search Query (`-q` / `--query`)**:
+  ```bash
+  uv run skill-atlas scan -T targets.txt -q git
+  ```
+  Skills not matching the query (matching across name, description, tags, repo_name, and path) are filtered out prior to static security and schema rule evaluation, accelerating scans and saving resources.

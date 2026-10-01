@@ -21,6 +21,10 @@ With the growth of agent environments (Junie, Claude Code, OpenAI Codex, Cursor,
    - Product skills: distinguish skills bundled as product resources from agent configurations.
 4. Core progress event streaming (`Stage`, `ProgressEvent`) providing real-time status updates.
 5. Lightweight local web interface (`skill-atlas serve`) with real-time status bar and interactive catalog.
+6. Multi-Repository Support with Search Query:
+   - Multi-target ingestion across local directories and remote GitHub repositories in a single run via CLI arguments (`TARGETS...`), a targets file (`--targets-file / -T`), or the Web UI.
+   - Audit-scoped search query (`--query / -q`) filtering skills prior to static rule evaluation to maximize scan throughput and minimize computation/network overhead.
+   - Interactive multi-repository Web UI with multi-target input, dynamic repository faceted filter chips, and instant real-time search filtering.
 
 ---
 
@@ -84,10 +88,22 @@ my-sample-skill/
 
 ### 3.1. Discovery and Git Repository Ingestion
 - **Target Ingestion**:
-  - The CLI accepts a target `TARGET` which can be:
+  - The CLI accepts one or more targets `TARGETS...` or a targets file `--targets-file / -T <path>`. Each target can be:
     - **Local Directory / Repository**: Path to a local folder or cloned Git repository. If the path is inside a Git repository, repository metadata and commit history are evaluated automatically.
     - **Remote Git Repository**: URL to a remote Git repository (e.g. `https://github.com/owner/repo.git`, `git@github.com:...`). The scanner scans the repository via the GitHub REST API and raw file downloads (without cloning), discovers skills, extracts provenance, and performs scanning. If a configured token encounters SAML SSO organization enforcement when accessing a public repository, the client automatically falls back to unauthenticated requests to complete the scan seamlessly.
     - **Single Skill Directory**: Path pointing directly to a directory containing `SKILL.md`.
+  - **Multi-Target Ingestion**:
+    - **Positional Arguments**: `skill-atlas scan TARGET1 TARGET2 ...` accepts multiple target directories or URLs. If no positional arguments and no `--targets-file` are provided, the target defaults to `.` (current directory).
+    - **Targets File**: `--targets-file / -T <path>` reads repository paths and URLs from a text file, one per line. Lines starting with `#` (comments) and empty or whitespace-only lines are ignored.
+    - **Target Merging & Normalization**: Targets provided via positional arguments and `--targets-file` are combined into an ordered list, normalized (stripped of whitespace and trailing slashes), and deduplicated while strictly preserving declaration order.
+    - **Mixed Target Support**: The scanner seamlessly processes mixed workloads in a single run, routing local paths to local filesystem discovery and remote URLs to remote GitHub Tree API discovery.
+    - **Validation & Error Handling**: If a specified `--targets-file` does not exist or contains no valid targets, or if an invalid argument is passed, the CLI produces an informative error message and exits with code `2`.
+- **Cross-Repository Provenance & Deduplication Isolation**:
+  - When scanning multiple repositories, skills with the same name across *different* repositories are treated as independent entities and are **never** deduplicated against each other.
+  - Each skill preserves its respective `repo_name` (e.g. `org-a/skills` vs `org-b/skills`), canonical `repo_url`, and Git commit provenance.
+  - Duplicate detection and stale copy checks (`DSC-001`) operate strictly within the boundary of each individual repository.
+- **Deterministic Multi-Repository Ordering**:
+  - Discovered skills across all repositories are sorted deterministically: primarily by `repo_name` ascending (treating empty/local targets consistently), and secondarily by `path` ascending.
 - **Recursive Skill Discovery**:
   - All subdirectories containing a valid `SKILL.md` are discovered.
   - Standard utility and cache directories are ignored automatically: `.git`, `.venv`, `node_modules`, `__pycache__`, `.pytest_cache`, `.junie`.
@@ -157,15 +173,56 @@ Skills may be placed in varied repository locations with distinct lifecycles:
 
 ---
 
+### 3.4. Audit-Scoped Query Search & Filtering (`--query / -q`)
+
+To optimize scan performance across large monorepos or multi-repository audits, Skill Atlas supports audit-scoped query filtering:
+
+- **Filter Scope**: `--query / -q <text>` accepts a search query string.
+- **Matching Criteria**: Matching is case-insensitive substring/token matching evaluated across:
+  1. Skill identifier/name (`skill.name`)
+  2. Description (`skill.description`)
+  3. Skill path (`skill.path`)
+  4. Repository name (`skill.repo_name`)
+  5. Declared tags (`skill.tags`)
+- **Matching Logic**:
+  ```python
+  def matches_query(skill: Skill, query: str) -> bool:
+      q = query.strip().lower()
+      if not q:
+          return True
+      tokens = [
+          skill.name.lower(),
+          skill.description.lower(),
+          skill.path.lower(),
+          (skill.repo_name or "").lower(),
+          *(t.lower() for t in skill.tags),
+      ]
+      return any(q in token for token in tokens)
+  ```
+- **Audit-Scope Rule Optimization**:
+  - Filtering occurs **before** static rule evaluation (`SCH-*`, `SEC-*`, `DSC-*`).
+  - Only skills that match the query are audited by the rule engine.
+  - Companion file fetches (e.g., downloading referenced scripts for security inspection) and rule evaluations are skipped entirely for non-matching skills, drastically minimizing network requests, execution time, and GitHub API quota consumption.
+- **Reporting & Summary**:
+  - The scan result and summary reflect only audited matching skills.
+  - The CLI and JSON reports record the applied `query` string.
+- **Zero Matching Skills Handling**:
+  - If a query matches zero skills across all targets, the scan exits cleanly with code `0`.
+  - The CLI outputs an informative notice: `0 skills matched query '<query>' across <N> target(s)`.
+
+---
+
 ## 4. Command-Line Interface (CLI Specification)
 
 ### 4.1. Scan Command:
 ```bash
-skill-atlas scan [TARGET] [OPTIONS]
+skill-atlas scan [TARGETS...] [OPTIONS]
 ```
-- `TARGET`: Path to a skill directory, a local Git repository, or a remote Git repository URL (e.g., `https://github.com/org/repo.git`). Default: `.` (current directory).
+- `TARGETS...`: Zero, one, or more paths to skill directories, local Git repositories, or remote Git repository URLs (e.g., `skill-atlas scan repo1 repo2 https://github.com/org/repo3.git`). If no positional arguments and no `--targets-file` are provided, defaults to `.` (current directory).
 
 ### 4.2. Scan Options:
+- `--targets-file, -T <path>`: Read target repository paths or URLs from a newline-delimited text file (supports `#` comments and empty/whitespace lines).
+- `--query, -q <text>`: Search query to filter skills across all repositories before static rule auditing.
 - `--format, -f [text|json]`: Output report format (default: `text`).
 - `--fail-on [error|warn]`: Minimum severity level triggering a non-zero exit code (default: `error`).
 - `--rules, -r [all|schema|security|discovery]`: Filter rule categories (default: `all`).
@@ -185,13 +242,15 @@ skill-atlas serve [OPTIONS]
 - `--allow-local`: Allow scanning local filesystem paths via web interface.
 - `--reload`: Enable auto-reload on code changes (development).
 - **Web UI Features**:
-  - Theme switcher between light and dark modes with manual toggle and system preference detection (persisted in `localStorage`).
-  - Real-time scan progress bar and GitHub rate limit indicator.
-  - Interactive skill catalog with pass/fail badges, findings breakdown, and duplicate origin badges.
-  - Interactive filter chips by origin (`All`, `Agent Config`, `Product`, `Standalone`, `Test Data`) and status filtering (`All statuses`, `Passed only`, `Failed only`).
-  - Search filter input to filter skills in real time by words in names, descriptions, tags, and paths.
-  - Interactive Similar Skills panel supporting customizable similarity threshold (`0.3` - `0.8`), repository-wide match discovery, and direct per-skill similarity search from catalog items.
-  - Export full scan results as JSON.
+  - **Multi-Repository Input**: Target input supporting multiple repository URLs or local paths separated by newlines or commas, with pre-fill demo shortcuts.
+  - **Dynamic Repository Faceted Filter Chips**: Interactive repository filter chips (`All Repos`, `repo1`, `repo2`, ...) dynamically populated from scanned repositories, functioning seamlessly alongside existing origin chips (`All`, `Agent Config`, `Product`, `Standalone`, `Test Data`).
+  - **Instant Real-Time Search**: Search filter input querying across skill names, descriptions, tags, repo names, and paths simultaneously without full-page reloads.
+  - **Multi-Target Progress Streaming**: Server-Sent Events (SSE) and status bar streaming discovery stages across multiple repositories (reporting target index, repository name, and rate limits in real time).
+  - **Theme switcher**: Toggle between light and dark modes with manual toggle and system preference detection (persisted in `localStorage`).
+  - **Interactive skill catalog**: Cards with pass/fail badges, findings breakdown, repository provenance, and duplicate origin badges.
+  - **Status filtering**: Quick toggles for `All statuses`, `Passed only`, `Failed only`.
+  - **Interactive Similar Skills panel**: Customizable similarity threshold (`0.3` - `0.8`), cross-repository match discovery, and direct per-skill similarity search from catalog items.
+  - **Export Results**: Download full scan results as JSON conforming to the multi-target schema.
 
 ### 4.4. `similar` Command Syntax:
 ```bash
@@ -217,25 +276,28 @@ The similarity engine calculates a multi-feature composite score between `0.0` a
 Dynamic re-weighting occurs when optional attributes (tags, files, body) are absent. Each match includes human-readable reasons explaining why the skills are similar.
 
 ### 4.6. Exit Codes:
-- `0`: Success (all checks passed or findings are below `--fail-on` threshold, or similar search completed).
+- `0`: Success (all checks passed or findings are below `--fail-on` threshold, or 0 skills matched `--query`, or similar search completed).
 - `1`: Violations found at or above `--fail-on` threshold (default: `ERROR`).
-- `2`: Fatal CLI error (invalid options, non-existent target path, argument parsing failure, rate limit exhausted).
+- `2`: Fatal CLI error (invalid options, non-existent target path, empty or non-existent targets file, argument parsing failure, rate limit exhausted).
 
 ---
 
 ## 5. Output Data Formats
 
 ### 5.1. Terminal Text Output (`--format text`):
-Informative rich table (`rich.table`):
+Informative rich table (`rich.table`) displaying multi-target status, active query badges, and aggregated summary stats:
 ```text
-🔍 Scanning skills in: https://github.com/example/skills-repo.git (repo: example/skills-repo)
-Found 2 skills...
+🔍 Scanning skills across 2 targets:
+  • https://github.com/example/skills-repo.git (repo: example/skills-repo)
+  • tests/fixtures/valid_skill (repo: valid_skill)
+🔎 Filter query: 'git'
+Found 2 matching skills (filtered from 5 total)...
 
-[FAIL] my-broken-skill
+[FAIL] my-broken-git-skill
   Repo:        example/skills-repo
   Commit:      a1b2c3d4e5f67890123456789abcdef012345678 (2024-03-15T14:30:00Z)
   Description: Demonstrates broken frontmatter and unsafe shell script execution
-  Path:        skills/my-broken-skill
+  Path:        skills/my-broken-git-skill
   ❌ [ERROR] SCH-003: Missing required field 'description' in SKILL.md:4
   ⚠️  [WARN]  SEC-003: Unsafe pipe to shell found in scripts/install.sh:12 ('curl | bash')
 
@@ -248,6 +310,7 @@ Found 2 skills...
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Summary:
+  Scanned Targets: 2
   Scanned Skills: 2
   Passed: 1
   Failed: 1
@@ -258,8 +321,13 @@ Status: FAILED (Exit Code 1)
 ### 5.2. JSON Output (`--format json`):
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "target": "https://github.com/example/skills-repo.git",
+  "targets": [
+    "https://github.com/example/skills-repo.git",
+    "tests/fixtures/valid_skill"
+  ],
+  "query": "git",
   "summary": {
     "total_skills": 2,
     "passed": 1,
@@ -268,17 +336,24 @@ Status: FAILED (Exit Code 1)
       "error": 1,
       "warn": 1,
       "info": 0
+    },
+    "by_origin": {
+      "agent-config": 0,
+      "product": 0,
+      "standalone": 2,
+      "test-data": 0
     }
   },
   "skills": [
     {
-      "name": "my-broken-skill",
+      "name": "my-broken-git-skill",
       "description": "Demonstrates broken frontmatter and unsafe shell script execution",
       "repo_name": "example/skills-repo",
       "repo_url": "https://github.com/example/skills-repo.git",
       "commit": "a1b2c3d4e5f67890123456789abcdef012345678",
       "commit_date": "2024-03-15T14:30:00Z",
-      "path": "skills/my-broken-skill",
+      "path": "skills/my-broken-git-skill",
+      "origin": "standalone",
       "valid": false,
       "findings": [
         {
@@ -288,12 +363,74 @@ Status: FAILED (Exit Code 1)
           "file": "SKILL.md",
           "line": 4,
           "suggestion": "Add a descriptive 'description' field to YAML frontmatter"
+        },
+        {
+          "rule_id": "SEC-003",
+          "severity": "WARN",
+          "message": "Unsafe pipe to shell found in scripts/install.sh:12 ('curl | bash')",
+          "file": "scripts/install.sh",
+          "line": 12,
+          "suggestion": "Avoid executing scripts piped directly from network tools"
         }
       ]
+    },
+    {
+      "name": "git-helper",
+      "description": "Git automation workflows for agent pipelines",
+      "repo_name": "example/skills-repo",
+      "repo_url": "https://github.com/example/skills-repo.git",
+      "commit": "8f9e0d1c2b3a4567890abcdef1234567890abcde",
+      "commit_date": "2024-01-10T09:15:00Z",
+      "path": "skills/git-helper",
+      "origin": "standalone",
+      "valid": true,
+      "findings": []
     }
-  ]
+  ],
+  "warnings": []
 }
 ```
+
+### 5.3. Data Models and API Contracts
+
+#### `ScanResult` Model
+The core scan aggregation model preserves backward compatibility with single-target consumers while providing structured multi-target metadata and query context:
+
+```python
+class ScanResult(BaseModel):
+    version: str = Field(default=__version__)
+    target: str  # Primary/first target for backward compatibility
+    targets: list[str] = Field(default_factory=list)  # All scanned targets (normalized)
+    query: str | None = None  # Active query string or None if unconstrained
+    summary: ScanSummary
+    skills: list[Skill]
+    warnings: list[str] = Field(default_factory=list)
+```
+
+- **Backward Compatibility Contract**:
+  - `target` is guaranteed to be a string representing the primary target (the first target in `targets`, or `""` if empty). Existing consumers expecting `result.target` or `"target": "..."` will continue operating without modification.
+  - `targets` contains the complete array of scanned targets (paths or URLs) in normalization order.
+  - `query` contains the optional query string if `--query / -q` was supplied, or `None` (`null` in JSON).
+
+#### `ScanRequest` Model (FastAPI Web API: `POST /api/scans`)
+The Web API request model accepts single-target or multi-target specifications along with search query parameters:
+
+```python
+class ScanRequest(BaseModel):
+    target: str = ""  # Backward compatibility: single target string
+    targets: list[str] = Field(default_factory=list)  # List of target paths or URLs
+    query: str | None = None  # Optional search query filter
+    ref: str | None = None  # Pinned Git reference for remote scans
+    fail_on: Literal["error", "warn"] = "error"
+    rules: Literal["all", "schema", "security", "discovery"] = "all"
+    ignore: list[str] = Field(default_factory=list)
+    include_test_data: bool = False
+```
+
+- **Target Ingestion Normalization**:
+  - If `targets` is empty and `target` is non-empty, `targets` is populated as `[target]`.
+  - If both `target` and `targets` are provided, they are merged and deduplicated.
+  - In UI interactions, multiple targets may be supplied separated by newlines or commas.
 
 ---
 
@@ -301,28 +438,44 @@ Status: FAILED (Exit Code 1)
 
 ```text
                ┌─────────────────────────┐
-               │         CLI             │ (Typer + Rich)
+               │    CLI / Web Interface  │ (Typer / FastAPI UI)
                └────────────┬────────────┘
-                            │
+                            │ (targets: list[str], query: str | None)
                ┌────────────▼────────────┐
-               │    Scanner Engine       │ (Scan Orchestrator)
+               │  Scanner Orchestrator   │
                └──────┬───────────┬──────┘
                       │           │
      ┌────────────────▼────┐     ┌▼────────────────────┐
-     │  Git & Discovery    │     │    Rule Registry    │
-     │  - Git Ingest/Clone │     │  - Schema Rules     │
-     │  - Provenance Log   │     │  - Security Rules   │
-     │  - Find SKILL.md    │     └─────────┬───────────┘
-     │  - Frontmatter      │               │
-     └─────────────────────┘               │
-                      │                    │
-                      └───────────┬────────┘
-                                  │
-                       ┌──────────▼──────────┐
-                       │  Reporters Engine   │
-                       │  - ConsoleReporter  │
-                       │  - JsonReporter     │
-                       └─────────────────────┘
+     │ Multi-Target Loop   │     │ Audit Query Filter  │
+     │ - Local discovery   │────►│ - matches_query()   │
+     │ - Remote GitHub tree│     │ - Pre-audit prune   │
+     └─────────────────────┘     └─────────┬───────────┘
+                                           │ (Matching skills only)
+                                 ┌─────────▼───────────┐
+                                 │ Deduplication & Log │
+                                 │ - Intra-repo DSC-001│
+                                 │ - Git provenance    │
+                                 └─────────┬───────────┘
+                                           │
+                                 ┌─────────▼───────────┐
+                                 │   Rule Registry     │
+                                 │   - Schema: SCH-*   │
+                                 │   - Security: SEC-* │
+                                 └─────────┬───────────┘
+                                           │
+                                 ┌─────────▼───────────┐
+                                 │ Unified ScanResult  │
+                                 │ - Aggregated stats  │
+                                 │ - Target & Query    │
+                                 └─────────┬───────────┘
+                                           │
+                      ┌────────────────────┴────────────────────┐
+                      ▼                                         ▼
+           ┌─────────────────────┐                   ┌─────────────────────┐
+           │  Reporters Engine   │                   │  Interactive Web UI │
+           │  - ConsoleReporter  │                   │  - Repo filter chips│
+           │  - JsonReporter     │                   │  - Real-time search │
+           └─────────────────────┘                   └─────────────────────┘
 ```
 
 ---
