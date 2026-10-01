@@ -9,6 +9,7 @@ This document captures verified findings, resolved review items, and potential f
 - **[M3] Tree truncation visibility**: Resolved. Added `warnings: list[str]` to `ScanResult`, ensuring repository tree truncation (>100k files) is reported in JSON and terminal outputs and triggers a non-zero exit code when `--fail-on warn` is set.
 - **[M4] Real-repository layout integration tests**: Resolved. Added pinned-SHA network integration tests for MPS and Koog in `tests/integration/test_network.py` with graceful quota skip handlers.
 - **[M5] Quadratic similarity comparison**: Resolved. Implemented `_SkillFeatures` token precomputation, unpromising pair pruning, and per-scan similarity result caching in `ScanJob`.
+- **[Bug] Client-wide SAML fallback**: Resolved. A SAML 403 on one target (e.g. `JetBrains/kotlin`) used to switch the shared `GitHubClient` to anonymous mode for all later targets of a multi-repository scan, exhausting the 60 req/h anonymous quota. The fallback is now tracked per owner; regression test `test_remote_saml_fallback_is_scoped_to_one_owner`.
 - **Minor Polish Items**:
   - Enhanced `SEC-002` regex with trailing slash and glob support (`rm -rf ~/`, `rm -rf $HOME/*`).
   - Added port pinning in Origin header middleware (`http://{host}:{port}`).

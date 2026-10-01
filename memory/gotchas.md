@@ -6,7 +6,9 @@ This document details non-obvious failure modes, security pitfalls, and edge cas
 - **The Problem**: GitHub tokens obtained via `gh auth token` or `GITHUB_TOKEN` fail against repositories owned by SAML SSO-enforced organizations (e.g. `JetBrains/kotlin`). The API responds with `HTTP 403 Forbidden` and header `x-github-sso: required; url=...`.
 - **The Paradox**: The repository is completely public, but an authenticated token without SSO authorization is rejected.
 - **The Solution**: In `src/skill_atlas/git/github.py`, when a request encounters `403` with `x-github-sso` (or `401`), it automatically retries **anonymously** (stripping the `Authorization` header).
-  - For public repositories, anonymous requests succeed (`HTTP 200`). Subsequent requests for the scan session stay unauthenticated.
+  - For public repositories, anonymous requests succeed (`HTTP 200`). Subsequent requests **for the same owner/organization** stay unauthenticated; other owners in a multi-repository scan keep using the token (`GitHubClient._anonymous_owners`).
+  - A `401` (invalid or revoked token) is different: it disables the token for every owner (`GitHubClient._token_invalid`).
+  - Pagination links (`/repositories/{id}/...`) carry no owner, so callers pass `owner=` to `_request()` explicitly.
   - For private repositories, anonymous requests return `404`, and the scanner surfaces the SAML SSO authorization URL to the user.
 
 ## 2. Rule `SCH-006` and Multi-Level Path Resolution
