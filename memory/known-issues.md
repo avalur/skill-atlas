@@ -17,6 +17,7 @@ This document captures verified findings, resolved review items, and potential f
   - Added test-data detection for `integration-tests?` directories.
 
 ## 2. Future Improvements Backlog
+- **Product research candidates** (`research/product-research.md`, 2026-10-01): skill lineage (origin + copies), org-wide inventory with change alerts, SARIF/PR annotations, pre-install trust card (recommended for the mockup), evasion-resistant rules (hidden Unicode, padding, context-file writes). Each has a primary metric and a guardrail in the document.
 - **GitLab & Bitbucket Remote Discovery**: Extend remote discovery engine to support GitLab and Bitbucket REST APIs using the same zero-clone tree inspection approach.
 - **Custom Rule Plugins**: Allow loading user-defined Python validation rules dynamically from a local configuration directory.
 - **Similarity Visualization**: Add an interactive graph view to the Web UI connecting similar skills across repositories.
