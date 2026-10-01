@@ -54,7 +54,7 @@
 ### 1.4 Where Skill Atlas stands
 
 **Gaps no tool above covers, and where Skill Atlas already plays:**
-1. **Discovery across repositories.** Catalogs crawl or accept submissions, and scanners take a path or a single repository. None scans a list of repos (or a whole org) and builds a joint inventory. Skill Atlas does this for multiple targets, with no cloning.
+1. **Discovery across repositories.** Catalogs crawl or accept submissions, and scanners take a path or a single repository. None scans a list of repos, or a whole org, and builds a joint inventory. Skill Atlas does this for multiple targets and, since PR #19, for entire organizations (`org:<name>`, concurrent, no cloning).
 2. **Git provenance.** Nobody records the commit where a skill first appeared. NVIDIA signs content, but only its own skills. Skill Atlas records first and last commits.
 3. **Similarity and duplicate detection.** At best there are name typosquat checks (SkillGuard) or description overlap (Cisco). Yet more than half of confirmed malicious skills came from **templated** variants by a single actor (arXiv:2602.06547), and SkillsMP counts 3M+ raw files without deduplication. Skill Atlas has similarity scoring and `DSC-001` for drifted copies.
 4. **Schema lint, security audit and browsable catalog in one local, token-optional tool.** The linters only lint, the scanners only scan, and no tool offers a local web catalog.
@@ -81,9 +81,9 @@ Every idea builds on a strength from §1.4 or closes a weakness. Each has one **
 - **User metric.** Median time to answer "Is this an original, and where is the origin?" in a moderated test, with and without the lineage view. **Success:** at least 2× faster.
 - **Guardrail.** False "copy" labels on independently written skills that solve the same task (≤ 5% of the labeled negatives).
 
-### Idea 2. Org-wide inventory with change alerts (`skill-atlas watch`)
+### Idea 2. Change alerts on top of the org-wide inventory (`skill-atlas watch`)
 - **Problem.** Every tool needs an explicit path or repository. Security teams cannot answer "Which skills exist across our 400 repos, and which changed this week?" Unit 42 advises users to "verify who published a skill", but no tool keeps that answer up to date.
-- **Feature.** `scan --org <name>` lists every repository through the GitHub API. A scheduled `watch` mode stores snapshots and emits a diff: new skills, deleted skills, changed scripts, newly added network or shell capabilities, and a new author. Notifications go to the console, JSON, or a webhook (Slack).
+- **Feature.** The org-wide scan (`org:<name>`) shipped in PR #19. What is still missing is the *change* dimension. A scheduled `watch` mode would store snapshots of each org scan and emit a diff: new skills, deleted skills, changed scripts, newly added network or shell capabilities, and a new author. Notifications go to the console, JSON, or a webhook (Slack).
 - **Primary metric.** Coverage against ground truth. For three pilot orgs, compare skills found against a GitHub code search for `filename:SKILL.md` plus manual review. **Success:** ≥ 98% coverage.
 - **Secondary metrics.** Median time from the commit that adds or changes a skill to the alert (**success:** ≤ 24 h in scheduled mode). Number of orgs that keep `watch` running for 4+ weeks.
 - **Guardrail.** API budget per scan, measured in requests per 100 repos. It must stay inside the 5,000 req/h token quota for orgs with ≤ 500 repos.
