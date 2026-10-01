@@ -97,8 +97,9 @@ HTML_CONTENT = """<!DOCTYPE html>
     .options-row { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.75rem; font-size: 0.85rem; color: var(--text-muted); align-items: center; }
     .options-row label { display: flex; align-items: center; gap: 0.35rem; }
     .filter-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-    .chip { cursor: pointer; padding: 0.3rem 0.75rem; border-radius: 9999px; background: var(--card-bg); border: 1px solid var(--border); font-size: 0.85rem; color: var(--text-muted); }
+    .chip { cursor: pointer; padding: 0.3rem 0.75rem; border-radius: 9999px; background: var(--card-bg); border: 1px solid var(--border); font-size: 0.85rem; color: var(--text-muted); transition: all 0.15s ease; }
     .chip.active { background: var(--primary); color: white; border-color: var(--primary); }
+    .chip#chip-starred.active { background: #f59e0b; color: white; border-color: #f59e0b; }
     .filter-row { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.75rem; }
     .filter-input { flex: 1; padding: 0.55rem 0.8rem; border: 1px solid var(--border); border-radius: 0.375rem; background: var(--bg); color: var(--text); font-size: 0.9rem; }
     .skill-item { border: 1px solid var(--border); border-radius: 0.375rem; margin-bottom: 0.75rem; padding: 1rem; background: var(--card-bg); }
@@ -108,6 +109,17 @@ HTML_CONTENT = """<!DOCTYPE html>
     .skill-meta { font-size: 0.8rem; color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 0.5rem; }
     .findings-list { margin-top: 0.75rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
     .finding-row { font-size: 0.85rem; margin-top: 0.35rem; display: flex; gap: 0.5rem; align-items: baseline; }
+    .btn-star { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; padding: 0.25rem 0.55rem; font-size: 0.75rem; background: var(--card-bg); border: 1px solid var(--border); color: var(--text-muted); border-radius: 0.375rem; cursor: pointer; transition: all 0.2s ease; }
+    .btn-star:hover { border-color: #f59e0b; color: #f59e0b; }
+    .btn-star.active { background: rgba(245, 158, 11, 0.12); border-color: #f59e0b; color: #f59e0b; font-weight: 600; }
+    .btn-star .star-icon { width: 14px; height: 14px; fill: transparent; stroke: currentColor; transition: fill 0.2s ease, stroke 0.2s ease, transform 0.2s ease; }
+    .btn-star.active .star-icon { fill: #f59e0b; stroke: #f59e0b; }
+    .modal-backdrop { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 1rem; backdrop-filter: blur(2px); }
+    .modal-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 0.5rem; max-width: 750px; width: 100%; max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3); overflow: hidden; }
+    .modal-header { padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .modal-body { padding: 1.25rem; overflow-y: auto; }
+    .modal-close-btn { background: none; border: none; font-size: 1.2rem; color: var(--text-muted); cursor: pointer; padding: 0.2rem 0.5rem; border-radius: 0.25rem; }
+    .modal-close-btn:hover { background: var(--border); color: var(--text); }
     #status-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 56px; background: var(--status-bg); color: var(--status-text); display: flex; align-items: center; justify-content: space-between; padding: 0 1.5rem; font-size: 0.85rem; border-top: 1px solid rgba(255,255,255,0.1); z-index: 100; }
     .status-left { display: flex; align-items: center; gap: 0.75rem; flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .progress-track { width: 140px; height: 8px; background: rgba(255,255,255,0.2); border-radius: 4px; overflow: hidden; }
@@ -181,9 +193,10 @@ HTML_CONTENT = """<!DOCTYPE html>
         </div>
       </div>
       <div id="origin-filter-section" style="margin-bottom:1rem;">
-        <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin-bottom:0.35rem;">Origins</div>
+        <div style="font-size:0.75rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); margin-bottom:0.35rem;">Origins &amp; Favorites</div>
         <div class="filter-chips" id="origin-chips">
           <div class="chip active" id="chip-all" onclick="setOriginFilter('all', event)">All (<span id="count-all">0</span>)</div>
+          <div class="chip" id="chip-starred" onclick="toggleStarredFilter(event)" style="border-color:rgba(245,158,11,0.4);" title="Filter and view only starred skills">★ Starred (<span id="count-starred">0</span>)</div>
           <div class="chip" id="chip-agent-config" onclick="setOriginFilter('agent-config', event)">Agent Config (<span id="count-agent-config">0</span>)</div>
           <div class="chip" id="chip-product" onclick="setOriginFilter('product', event)">Product (<span id="count-product">0</span>)</div>
           <div class="chip" id="chip-standalone" onclick="setOriginFilter('standalone', event)">Standalone (<span id="count-standalone">0</span>)</div>
@@ -268,13 +281,16 @@ HTML_CONTENT = """<!DOCTYPE html>
 
   <script>
     const CSRF_TOKEN = "{{CSRF_TOKEN}}";
+    const STARRED_STORAGE_KEY = 'skill_atlas_starred_skills';
     let currentScanId = null;
     let eventSource = null;
     let scanResult = null;
     let activeFilter = 'all';
     let activeRepoFilter = 'all';
     let activeStatusFilter = 'all';
+    let activeStarredFilter = false;
     let currentSimilarQuery = null;
+    let currentModalSkill = null;
 
     function loadSampleMultiTargets() {
       const input = document.getElementById('target-input');
@@ -357,6 +373,7 @@ HTML_CONTENT = """<!DOCTYPE html>
       activeFilter = 'all';
       activeRepoFilter = 'all';
       activeStatusFilter = 'all';
+      activeStarredFilter = false;
       currentSimilarQuery = null;
 
       document.querySelectorAll('#origin-chips .chip').forEach(c => c.classList.remove('active'));
@@ -364,6 +381,8 @@ HTML_CONTENT = """<!DOCTYPE html>
       if (chipAll) chipAll.classList.add('active');
       const chipRepoAll = document.getElementById('chip-repo-all');
       if (chipRepoAll) chipRepoAll.classList.add('active');
+      const chipStarred = document.getElementById('chip-starred');
+      if (chipStarred) chipStarred.classList.remove('active');
 
       document.getElementById('summary-section').style.display = 'none';
       document.getElementById('similar-section').style.display = 'none';
@@ -503,7 +522,205 @@ HTML_CONTENT = """<!DOCTYPE html>
       if (chip) {
         chip.classList.add('active');
       }
+      // Preserve the independent "Starred" toggle state across origin changes.
+      const chipStarred = document.getElementById('chip-starred');
+      if (chipStarred) chipStarred.classList.toggle('active', activeStarredFilter);
       renderSkills();
+    }
+
+    // --- Starred skills (persisted in localStorage) ---
+
+    function getStarredSet() {
+      try {
+        const raw = localStorage.getItem(STARRED_STORAGE_KEY);
+        if (!raw) return new Set();
+        const arr = JSON.parse(raw);
+        return new Set(Array.isArray(arr) ? arr : []);
+      } catch (e) {
+        return new Set();
+      }
+    }
+
+    function saveStarredSet(set) {
+      try {
+        localStorage.setItem(STARRED_STORAGE_KEY, JSON.stringify([...set]));
+      } catch (e) {
+        /* localStorage may be unavailable (private mode / quota) */
+      }
+    }
+
+    function skillKey(sk) {
+      return `${sk.repo_name || 'local'}::${sk.path || ''}::${sk.name || ''}`;
+    }
+
+    function isStarred(sk) {
+      return getStarredSet().has(skillKey(sk));
+    }
+
+    function toggleStar(sk) {
+      const set = getStarredSet();
+      const key = skillKey(sk);
+      if (set.has(key)) {
+        set.delete(key);
+      } else {
+        set.add(key);
+      }
+      saveStarredSet(set);
+      updateStarredCount();
+      return set.has(key);
+    }
+
+    function countStarredSkills() {
+      if (!scanResult || !scanResult.skills) return 0;
+      const set = getStarredSet();
+      return scanResult.skills.filter(sk => set.has(skillKey(sk))).length;
+    }
+
+    function updateStarredCount() {
+      const el = document.getElementById('count-starred');
+      if (el) el.textContent = countStarredSkills();
+    }
+
+    function createStarButton(sk, labelled) {
+      const btn = document.createElement('button');
+      const starred = isStarred(sk);
+      btn.className = 'btn-star' + (starred ? ' active' : '');
+      btn.setAttribute('aria-pressed', starred ? 'true' : 'false');
+      btn.title = starred ? 'Remove from starred' : 'Add to starred';
+      btn.innerHTML =
+        '<svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+        '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>' +
+        '</svg>';
+      if (labelled) {
+        const lbl = document.createElement('span');
+        lbl.className = 'star-label';
+        lbl.textContent = starred ? 'Starred' : 'Star';
+        btn.appendChild(lbl);
+      }
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const nowStarred = toggleStar(sk);
+        btn.classList.toggle('active', nowStarred);
+        btn.setAttribute('aria-pressed', nowStarred ? 'true' : 'false');
+        btn.title = nowStarred ? 'Remove from starred' : 'Add to starred';
+        const lbl = btn.querySelector('.star-label');
+        if (lbl) lbl.textContent = nowStarred ? 'Starred' : 'Star';
+        if (activeStarredFilter) renderSkills();
+      };
+      return btn;
+    }
+
+    function toggleStarredFilter(evt) {
+      activeStarredFilter = !activeStarredFilter;
+      const chip = document.getElementById('chip-starred');
+      if (chip) chip.classList.toggle('active', activeStarredFilter);
+      renderSkills();
+    }
+
+    // --- Skill detail modal ---
+
+    function modalKeyHandler(e) {
+      if (e.key === 'Escape') closeSkillModal();
+    }
+
+    function closeSkillModal() {
+      const m = document.getElementById('skill-modal-root');
+      if (m) m.remove();
+      document.removeEventListener('keydown', modalKeyHandler);
+      currentModalSkill = null;
+    }
+
+    function openSkillDetail(sk) {
+      closeSkillModal();
+      currentModalSkill = sk;
+
+      const backdrop = document.createElement('div');
+      backdrop.className = 'modal-backdrop';
+      backdrop.id = 'skill-modal-root';
+      backdrop.onclick = (e) => { if (e.target === backdrop) closeSkillModal(); };
+
+      const card = document.createElement('div');
+      card.className = 'modal-card';
+
+      const header = document.createElement('div');
+      header.className = 'modal-header';
+
+      const htitle = document.createElement('div');
+      htitle.className = 'skill-title';
+      const hName = document.createElement('span');
+      hName.textContent = sk.name;
+      htitle.appendChild(hName);
+      const hOrigin = document.createElement('span');
+      hOrigin.className = 'badge badge-primary';
+      hOrigin.textContent = sk.origin;
+      htitle.appendChild(hOrigin);
+
+      const headerActions = document.createElement('div');
+      headerActions.style.display = 'flex';
+      headerActions.style.alignItems = 'center';
+      headerActions.style.gap = '0.5rem';
+      headerActions.appendChild(createStarButton(sk, true));
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'modal-close-btn';
+      closeBtn.textContent = '✕';
+      closeBtn.title = 'Close';
+      closeBtn.onclick = closeSkillModal;
+      headerActions.appendChild(closeBtn);
+
+      header.appendChild(htitle);
+      header.appendChild(headerActions);
+
+      const body = document.createElement('div');
+      body.className = 'modal-body';
+
+      if (sk.description) {
+        const desc = document.createElement('div');
+        desc.className = 'skill-desc';
+        desc.style.marginBottom = '0.75rem';
+        desc.textContent = sk.description;
+        body.appendChild(desc);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = 'skill-meta';
+      const addMeta = (text) => {
+        const span = document.createElement('span');
+        span.textContent = text;
+        meta.appendChild(span);
+      };
+      addMeta(`Path: ${sk.path}`);
+      if (sk.repo_name) addMeta(`Repo: ${sk.repo_name}`);
+      if (sk.updated_date) addMeta(`Updated: ${sk.updated_date}`);
+      if (sk.tags && sk.tags.length > 0) addMeta(`Tags: ${sk.tags.join(', ')}`);
+      body.appendChild(meta);
+
+      if (sk.findings && sk.findings.length > 0) {
+        const findingsList = document.createElement('div');
+        findingsList.className = 'findings-list';
+        for (const f of sk.findings) {
+          const fRow = document.createElement('div');
+          fRow.className = 'finding-row';
+          const badgeClass = f.severity === 'ERROR' ? 'badge-error' : f.severity === 'WARN' ? 'badge-warn' : 'badge-primary';
+          const bSpan = document.createElement('span');
+          bSpan.className = `badge ${badgeClass}`;
+          bSpan.textContent = f.severity;
+          fRow.appendChild(bSpan);
+          const ruleB = document.createElement('b');
+          ruleB.textContent = f.rule_id ? `${f.rule_id}: ` : '';
+          fRow.appendChild(ruleB);
+          const msgSpan = document.createElement('span');
+          msgSpan.textContent = f.message || '';
+          fRow.appendChild(msgSpan);
+          findingsList.appendChild(fRow);
+        }
+        body.appendChild(findingsList);
+      }
+
+      card.appendChild(header);
+      card.appendChild(body);
+      backdrop.appendChild(card);
+      document.body.appendChild(backdrop);
+      document.addEventListener('keydown', modalKeyHandler);
     }
 
     function renderResults() {
@@ -527,6 +744,7 @@ HTML_CONTENT = """<!DOCTYPE html>
       document.getElementById('count-product').textContent = s.by_origin['product'] || 0;
       document.getElementById('count-standalone').textContent = s.by_origin['standalone'] || 0;
       document.getElementById('count-test-data').textContent = s.by_origin['test-data'] || 0;
+      updateStarredCount();
 
       // Populate dynamic repo chips
       const repoMap = {};
@@ -575,7 +793,11 @@ HTML_CONTENT = """<!DOCTYPE html>
       const filterText = filterInput ? filterInput.value.trim().toLowerCase() : '';
       const filterWords = filterText ? filterText.split(/\\s+/).filter(Boolean) : [];
 
+      const starredSet = getStarredSet();
       const filtered = scanResult.skills.filter(sk => {
+        if (activeStarredFilter && !starredSet.has(skillKey(sk))) {
+          return false;
+        }
         if (activeRepoFilter !== 'all') {
           const repo = sk.repo_name || 'local';
           if (repo !== activeRepoFilter) {
@@ -608,10 +830,12 @@ HTML_CONTENT = """<!DOCTYPE html>
       });
 
       if (filtered.length === 0) {
-        const hasFilters = filterWords.length > 0 || activeFilter !== 'all' || activeRepoFilter !== 'all' || activeStatusFilter !== 'all';
-        const msg = hasFilters
-          ? 'No skills matching the filter.'
-          : (activeFilter !== 'all' ? 'No skills in this category.' : 'No skills found.');
+        const hasFilters = filterWords.length > 0 || activeFilter !== 'all' || activeRepoFilter !== 'all' || activeStatusFilter !== 'all' || activeStarredFilter;
+        const msg = activeStarredFilter
+          ? 'No starred skills yet. Click the star on a skill to add it here.'
+          : (hasFilters
+            ? 'No skills matching the filter.'
+            : (activeFilter !== 'all' ? 'No skills in this category.' : 'No skills found.'));
         list.innerHTML = `<div style="text-align:center; padding:2rem; color:var(--text-muted);">${msg}</div>`;
         return;
       }
@@ -633,6 +857,9 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         const nameSpan = document.createElement('span');
         nameSpan.textContent = sk.name;
+        nameSpan.style.cursor = 'pointer';
+        nameSpan.title = 'View skill details';
+        nameSpan.onclick = () => openSkillDetail(sk);
 
         const originBadge = document.createElement('span');
         originBadge.className = 'badge badge-primary';
@@ -664,6 +891,8 @@ HTML_CONTENT = """<!DOCTYPE html>
         simBtn.title = `Find skills similar to ${sk.name}`;
         simBtn.onclick = () => findSimilarForSkill(sk.name);
         actionsDiv.appendChild(simBtn);
+
+        actionsDiv.appendChild(createStarButton(sk, false));
 
         header.appendChild(actionsDiv);
         item.appendChild(header);

@@ -607,3 +607,24 @@ def test_web_multi_line_target_parsing(tmp_path: Path):
     data = res_poll.json()
     assert len(data["targets"]) == 2
     assert len(data["skills"]) == 2
+
+
+def test_web_index_contains_star_feature():
+    """The UI exposes the starred-skills feature (chip, storage, handlers)."""
+    app = create_app()
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+    # Starred filter chip with live count.
+    assert 'id="chip-starred"' in html
+    assert 'id="count-starred"' in html
+    assert "toggleStarredFilter" in html
+    # Persistence key and helpers.
+    assert "skill_atlas_starred_skills" in html
+    assert "STARRED_STORAGE_KEY" in html
+    assert "function toggleStar(" in html
+    assert "function createStarButton(" in html
+    # Skill detail modal.
+    assert "function openSkillDetail(" in html
+    assert "modal-backdrop" in html
