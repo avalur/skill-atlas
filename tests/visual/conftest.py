@@ -140,7 +140,44 @@ def deterministic_visual_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
         ),
     ]
 
-    return make_repo(repo_dir, commits=commits)
+    repo = make_repo(repo_dir, commits=commits)
+    subprocess.run(
+        ["git", "config", "remote.origin.url", "https://github.com/acme/core-skills.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    return repo
+
+
+@pytest.fixture(scope="session")
+def deterministic_visual_second_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Create a second deterministic Git repository for multi-repo visual testing."""
+    repo_dir = tmp_path_factory.mktemp("visual_repo_secondary")
+    tree = {
+        ".claude/skills/deploy-helper/SKILL.md": (
+            "---\nname: deploy-helper\ndescription: Multi-cloud automated deployment skill.\n---\n# Deploy\n"
+        ),
+        ".claude/skills/infra-monitor/SKILL.md": (
+            "---\nname: infra-monitor\ndescription: Infrastructure telemetry and health checks.\n---\n# Telemetry\n"
+        ),
+    }
+    commits = [
+        CommitDef(
+            message="feat: add cloud deployment and infrastructure skills",
+            files=tree,
+            date="2026-09-02T10:00:00Z",
+            author="Skill Atlas Agent <agent@example.com>",
+        ),
+    ]
+    repo = make_repo(repo_dir, commits=commits)
+    subprocess.run(
+        ["git", "config", "remote.origin.url", "https://github.com/acme/infra-skills.git"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    return repo
 
 
 def _find_free_port() -> int:

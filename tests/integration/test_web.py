@@ -468,3 +468,142 @@ def test_web_skill_map_endpoints(tmp_path: Path):
     # 4. Invalid method
     inv_resp = client.get(f"/api/scans/{scan_id}/map?method=invalid")
     assert inv_resp.status_code == 422
+
+
+def test_web_multi_repo_ui_elements():
+    """Verify that the web interface includes multi-repo input, query option, and repo chips."""
+    app = create_app()
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "loadSampleMultiTargets" in resp.text
+    assert 'id="query-input"' in resp.text
+    assert 'id="repo-filter-section"' in resp.text
+    assert 'id="repo-chips"' in resp.text
+    assert "setRepoFilter" in resp.text
+    assert "activeRepoFilter" in resp.text
+
+
+def test_web_multi_target_scan(tmp_path: Path):
+    """Verify scanning multiple repositories through /api/scans with targets list."""
+    repo1 = make_repo(
+        tmp_path / "web_multi_repo1",
+        tree={
+            ".claude/skills/repo1-skill/SKILL.md": (
+                "---\nname: repo1-skill\ndescription: First repository skill.\n---\n"
+            ),
+        },
+    )
+    repo2 = make_repo(
+        tmp_path / "web_multi_repo2",
+        tree={
+            ".claude/skills/repo2-skill/SKILL.md": (
+                "---\nname: repo2-skill\ndescription: Second repository skill.\n---\n"
+            ),
+        },
+    )
+
+    app = create_app(allow_local=True)
+    client = TestClient(app)
+
+    resp = client.post("/api/scans", json={"targets": [str(repo1), str(repo2)]})
+    assert resp.status_code == 200
+    scan_id = resp.json()["scan_id"]
+
+    for _ in range(50):
+        res_poll = client.get(f"/api/scans/{scan_id}")
+        if res_poll.status_code == 200 and "skills" in res_poll.json():
+            break
+        time.sleep(0.05)
+
+    data = res_poll.json()
+    assert len(data["targets"]) == 2
+    assert str(repo1) in data["targets"]
+    assert str(repo2) in data["targets"]
+    assert len(data["skills"]) == 2
+    skill_names = {s["name"] for s in data["skills"]}
+    assert skill_names == {"repo1-skill", "repo2-skill"}
+    repo_names = {s["repo_name"] for s in data["skills"]}
+    assert "web_multi_repo1" in repo_names
+    assert "web_multi_repo2" in repo_names
+
+
+def test_web_query_filtered_scan(tmp_path: Path):
+    """Verify that query parameter in /api/scans limits audit to matching skills."""
+    repo = make_repo(
+        tmp_path / "web_query_repo",
+        tree={
+            ".claude/skills/git-helper/SKILL.md": (
+                "---\nname: git-helper\ndescription: Helps with git automation.\n---\n"
+            ),
+            ".claude/skills/docker-builder/SKILL.md": (
+                "---\nname: docker-builder\ndescription: Builds container images.\n---\n"
+            ),
+        },
+    )
+
+    app = create_app(allow_local=True)
+    client = TestClient(app)
+
+    resp = client.post("/api/scans", json={"target": str(repo), "query": "git"})
+    assert resp.status_code == 200
+    scan_id = resp.json()["scan_id"]
+
+    for _ in range(50):
+        res_poll = client.get(f"/api/scans/{scan_id}")
+        if res_poll.status_code == 200 and "skills" in res_poll.json():
+            break
+        time.sleep(0.05)
+
+    data = res_poll.json()
+    assert data["query"] == "git"
+    assert len(data["skills"]) == 1
+    assert data["skills"][0]["name"] == "git-helper"
+
+
+def test_web_multi_target_validation():
+    """Verify target validation rules for multiple targets and empty inputs."""
+    app = create_app(allow_local=False)
+    client = TestClient(app)
+
+    # Rejects non-github when allow_local=False
+    resp = client.post(
+        "/api/scans",
+        json={"targets": ["https://github.com/valid/repo", "https://gitlab.com/invalid/repo"]},
+    )
+    assert resp.status_code == 422
+    assert "Only GitHub" in resp.json()["detail"]
+
+    # Rejects empty targets
+    resp_empty = client.post("/api/scans", json={"targets": ["", "  "]})
+    assert resp_empty.status_code == 422
+    assert "At least one target" in resp_empty.json()["detail"]
+
+
+def test_web_multi_line_target_parsing(tmp_path: Path):
+    """Verify newline-separated targets in single target field."""
+    repo1 = make_repo(
+        tmp_path / "line_repo1",
+        tree={".claude/skills/s1/SKILL.md": "---\nname: s1\ndescription: s1\n---\n"},
+    )
+    repo2 = make_repo(
+        tmp_path / "line_repo2",
+        tree={".claude/skills/s2/SKILL.md": "---\nname: s2\ndescription: s2\n---\n"},
+    )
+
+    app = create_app(allow_local=True)
+    client = TestClient(app)
+
+    resp = client.post("/api/scans", json={"target": f"{repo1}\n{repo2}"})
+    assert resp.status_code == 200
+    scan_id = resp.json()["scan_id"]
+
+    for _ in range(50):
+        res_poll = client.get(f"/api/scans/{scan_id}")
+        if res_poll.status_code == 200 and "skills" in res_poll.json():
+            break
+        time.sleep(0.05)
+
+    data = res_poll.json()
+    assert len(data["targets"]) == 2
+    assert len(data["skills"]) == 2

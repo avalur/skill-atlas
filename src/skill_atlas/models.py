@@ -7,9 +7,9 @@ import hashlib
 import re
 from collections.abc import Callable
 from enum import StrEnum
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from skill_atlas import __version__
 
@@ -207,6 +207,25 @@ class Skill(BaseModel):
         return not any(f.severity == Severity.ERROR for f in self.findings)
 
 
+def matches_query(skill: Skill, query: str) -> bool:
+    """Check if a skill matches a case-insensitive search query.
+
+    Matches query substring against skill name, description, path,
+    repo_name, and declared tags.
+    """
+    q = query.strip().lower()
+    if not q:
+        return True
+    tokens = [
+        (skill.name or "").lower(),
+        (skill.description or "").lower(),
+        (skill.path or "").lower(),
+        (skill.repo_name or "").lower(),
+        *(str(t).lower() for t in (skill.tags or []) if t),
+    ]
+    return any(q in token for token in tokens)
+
+
 class ScanSummary(BaseModel):
     total_skills: int = 0
     passed: int = 0
@@ -226,10 +245,20 @@ class ScanSummary(BaseModel):
 
 class ScanResult(BaseModel):
     version: str = Field(default=__version__)
-    target: str
+    target: str = ""
+    targets: list[str] = Field(default_factory=list)
+    query: str | None = None
     summary: ScanSummary
     skills: list[Skill]
     warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _sync_targets(self) -> Self:
+        if self.targets and not self.target:
+            self.target = self.targets[0]
+        elif self.target and not self.targets:
+            self.targets = [self.target]
+        return self
 
     def has_failures(self, fail_on: str = "error", include_test_data: bool = False) -> bool:
         """Check if any skill failed the threshold or if there are blocking findings."""
@@ -265,6 +294,9 @@ class ProgressEvent(BaseModel):
     skill_path: str | None = None
     rate_limit_remaining: int | None = None
     elapsed_ms: int = 0
+    target_index: int | None = None
+    target_total: int | None = None
+    target_name: str | None = None
 
 
 ProgressCallback = Callable[[ProgressEvent], None]

@@ -12,7 +12,7 @@ from skill_atlas import __version__
 from skill_atlas.map import classify_skills_jev, cluster_skills_ai, group_skills_heuristic
 from skill_atlas.models import ProgressEvent, ScanResult, SkillOrigin
 from skill_atlas.reporters import ConsoleReporter, JsonReporter
-from skill_atlas.scanner import Scanner
+from skill_atlas.scanner import Scanner, normalize_targets, parse_targets_file
 from skill_atlas.similarity import find_similar_skills
 
 app = typer.Typer(
@@ -45,13 +45,29 @@ def main(
 
 @app.command(name="scan")
 def scan_command(
-    target: Annotated[
-        str,
+    targets: Annotated[
+        list[str] | None,
         typer.Argument(
-            metavar="TARGET",
-            help="Path to a skill directory, a local Git repository, or a remote Git repository URL.",
+            metavar="[TARGETS...]",
+            help="One or more paths to skill directories, local Git repositories, or remote Git repository URLs.",
         ),
-    ] = ".",
+    ] = None,
+    targets_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--targets-file",
+            "-T",
+            help="Path to a newline-delimited text file containing target repository paths or URLs.",
+        ),
+    ] = None,
+    query: Annotated[
+        str | None,
+        typer.Option(
+            "--query",
+            "-q",
+            help="Search query to filter skills across all repositories before static rule auditing.",
+        ),
+    ] = None,
     format: Annotated[
         str,
         typer.Option(
@@ -116,25 +132,65 @@ def scan_command(
     ] = False,
 ) -> None:
     """Scan skills for structural consistency and security vulnerabilities."""
-    target_clean = target.strip()
-    if sample or target_clean in (":sample", "sample"):
-        fixtures_dir = Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures"
-        if (fixtures_dir / "vulnerable_skills").is_dir():
-            target_clean = str(fixtures_dir / "vulnerable_skills")
-        elif fixtures_dir.is_dir():
-            target_clean = str(fixtures_dir)
-        else:
+    raw_targets = list(targets) if targets else []
+
+    file_targets: list[str] = []
+    if targets_file is not None:
+        try:
+            file_targets = parse_targets_file(targets_file)
+        except FileNotFoundError as err:
+            typer.secho(f"Error: {err}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2) from err
+        except (OSError, UnicodeDecodeError) as err:
+            typer.secho(
+                f"Error: Failed to read targets file '{targets_file}': {err}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=2) from err
+        except ValueError as err:
+            typer.secho(f"Error: {err}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2) from err
+
+    combined_targets = raw_targets + file_targets
+    if not combined_targets:
+        combined_targets = ["."]
+
+    fixtures_dir = Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures"
+    sample_target = (
+        str(fixtures_dir / "vulnerable_skills")
+        if (fixtures_dir / "vulnerable_skills").is_dir()
+        else str(fixtures_dir)
+    )
+    if sample:
+        if not Path(sample_target).is_dir():
             typer.secho("Error: Sample fixtures not found.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=2)
+        combined_targets = [sample_target]
+    else:
+        new_targets: list[str] = []
+        for t in combined_targets:
+            if t in (":sample", "sample"):
+                if not Path(sample_target).is_dir():
+                    typer.secho("Error: Sample fixtures not found.", fg=typer.colors.RED, err=True)
+                    raise typer.Exit(code=2)
+                new_targets.append(sample_target)
+            else:
+                new_targets.append(t)
+        combined_targets = new_targets
 
-    # Validate options
-    if target_clean.startswith("-"):
-        typer.secho(
-            f"Error: Invalid target '{target}'. Target cannot start with '-'.",
-            fg=typer.colors.RED,
-            err=True,
-        )
-        raise typer.Exit(code=2)
+    # Validate target strings
+    for t in combined_targets:
+        if t.startswith("-"):
+            typer.secho(
+                f"Error: Invalid target '{t}'. Target cannot start with '-'.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    normalized_targets = normalize_targets(combined_targets)
+    query_clean = query.strip() if (query and query.strip()) else None
 
     format_clean = format.lower().strip()
     if format_clean not in ("text", "json"):
@@ -177,8 +233,9 @@ def scan_command(
             include_test_data=include_test_data,
         )
         result: ScanResult = scanner.scan(
-            target=target_clean,
+            targets=normalized_targets,
             ref=ref,
+            query=query_clean,
             include_test_data=include_test_data,
             on_progress=on_progress,
         )

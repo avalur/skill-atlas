@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.markup import escape
 from rich.rule import Rule as RichRule
 
-from skill_atlas.models import ScanResult, Severity
+from skill_atlas.discovery.remote import is_remote_target
+from skill_atlas.git.client import get_repo_info, parse_github_url
+from skill_atlas.models import ScanResult, Severity, Skill
 from skill_atlas.similarity import SimilarSkillsResult
 
 if TYPE_CHECKING:
@@ -22,6 +25,36 @@ def _sanitize(text: str) -> str:
     """Strip ANSI escape characters and escape Rich markup."""
     clean_text = ANSI_PATTERN.sub("", text)
     return escape(clean_text)
+
+
+def _format_target_line(target: str, skills: list[Skill]) -> str:
+    """Format target display with repository provenance."""
+    target_clean = _sanitize(target)
+    for s in skills:
+        if s.repo_url and (s.repo_url == target or s.repo_url.rstrip("/") == target.rstrip("/")):
+            if s.repo_name:
+                return f"{target_clean} (repo: {_sanitize(s.repo_name)})"
+    if is_remote_target(target):
+        gh_match = parse_github_url(target)
+        if gh_match:
+            return f"{target_clean} (repo: {_sanitize(f'{gh_match[0]}/{gh_match[1]}')})"
+
+    p = Path(target)
+    for s in skills:
+        if s.repo_name and (p.name == s.repo_name or str(p).endswith(s.repo_name)):
+            return f"{target_clean} (repo: {_sanitize(s.repo_name)})"
+    try:
+        if p.is_dir():
+            _, repo_name, _ = get_repo_info(p)
+            if repo_name:
+                return f"{target_clean} (repo: {_sanitize(repo_name)})"
+            elif p.name:
+                return f"{target_clean} (repo: {_sanitize(p.name)})"
+        elif p.name and p.name != ".":
+            return f"{target_clean} (repo: {_sanitize(p.name)})"
+    except OSError:
+        pass
+    return target_clean
 
 
 class ConsoleReporter:
@@ -37,14 +70,47 @@ class ConsoleReporter:
         include_test_data: bool = False,
         verbose: bool = False,
     ) -> None:
-        target_display = _sanitize(result.target)
-        repo_extra = ""
-        # Check if first skill has repo_name
-        if result.skills and result.skills[0].repo_name:
-            repo_extra = f" (repo: {_sanitize(result.skills[0].repo_name)})"
+        targets_list = result.targets or ([result.target] if result.target else [])
+        if len(targets_list) > 1:
+            self.console.print(
+                f"[bold]🔍 Scanning skills across {len(targets_list)} targets:[/bold]"
+            )
+            for t in targets_list:
+                target_str = _format_target_line(t, result.skills)
+                self.console.print(f"  • {target_str}")
+        else:
+            target_display = _sanitize(result.target)
+            repo_extra = ""
+            # Check if first skill has repo_name
+            if result.skills and result.skills[0].repo_name:
+                repo_extra = f" (repo: {_sanitize(result.skills[0].repo_name)})"
+            elif result.target:
+                if is_remote_target(result.target):
+                    gh_match = parse_github_url(result.target)
+                    if gh_match:
+                        repo_extra = f" (repo: {_sanitize(f'{gh_match[0]}/{gh_match[1]}')})"
+                else:
+                    try:
+                        p = Path(result.target)
+                        if p.is_dir():
+                            _, repo_name, _ = get_repo_info(p)
+                            if repo_name:
+                                repo_extra = f" (repo: {_sanitize(repo_name)})"
+                    except OSError:
+                        pass
 
-        self.console.print(f"[bold]🔍 Scanning skills in:[/bold] {target_display}{repo_extra}")
-        self.console.print(f"Found {result.summary.total_skills} skills...\n")
+            self.console.print(f"[bold]🔍 Scanning skills in:[/bold] {target_display}{repo_extra}")
+
+        if result.query:
+            self.console.print(f"[bold]🔎 Filter query:[/bold] '{_sanitize(result.query)}'")
+            if result.summary.total_skills == 0:
+                self.console.print(
+                    f"[dim]0 skills matched query '{_sanitize(result.query)}' across {len(targets_list)} target(s).[/dim]\n"
+                )
+            else:
+                self.console.print(f"Found {result.summary.total_skills} matching skills...\n")
+        else:
+            self.console.print(f"Found {result.summary.total_skills} skills...\n")
 
         for skill in result.skills:
             # Determine status based on findings, fail_on threshold, and origin
@@ -121,6 +187,8 @@ class ConsoleReporter:
 
         self.console.print(RichRule(style="dim"))
         self.console.print("[bold]Summary:[/bold]")
+        if len(targets_list) > 1:
+            self.console.print(f"  Scanned Targets: {len(targets_list)}")
         self.console.print(f"  Scanned Skills: {result.summary.total_skills}")
         self.console.print(f"  Passed: {result.summary.passed}")
         self.console.print(f"  Failed: {result.summary.failed}")
