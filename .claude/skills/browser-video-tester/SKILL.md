@@ -36,7 +36,8 @@ Autonomous browser testing skill inspired by [`video-use`](https://github.com/br
 - [Browser Tester Engine](scripts/browser_tester.py): Core Playwright harness with visual cursor, action banners, video recording, and ffmpeg encoding.
 - [Web UI Audit Runner](scripts/run_web_audit.py): End-to-end interactive test suite covering theme toggle, search, status and origin filters, scanning, and similar skills discovery.
 - [Upbeat Music Generator](scripts/generate_music.py): Synthesizer for high-energy 128 BPM electronic background music with sidechain ducking and punchy drums.
-- [Demo Video Recorder](scripts/record_demo.py): Automated pipeline recording high-definition demo walkthroughs, merging upbeat music, and outputting optimized MP4, GIF, and PNG assets for README and PR documentation.
+- [Demo Video Recorder](scripts/record_demo.py): Automated pipeline recording a narrated walkthrough of the current Web UI (multi-repo scan of `cursor/plugins` and `avalur/skill-atlas`, time-lapsed scan wait, filters, Find Similar, Skill Map) and outputting MP4, GIF, and PNG assets into `docs/assets/`.
+- [Narration](scripts/narration.py): Offline female voice-over via Piper (`en_US-lessac-medium`, override with `SKILL_ATLAS_PIPER_MODEL`) with a macOS `say -v Samantha` fallback, plus FFmpeg mixing with ducked background music and time-lapse support.
 
 ## Usage
 
@@ -45,10 +46,14 @@ Autonomous browser testing skill inspired by [`video-use`](https://github.com/br
 uv run python .claude/skills/browser-video-tester/scripts/run_web_audit.py --url http://127.0.0.1:8765
 ```
 
-### Record Demo Video with Music & GIF Preview
+### Record Narrated Demo Video & GIF Preview
+Start the server first (`uv run skill-atlas serve`, with `GITHUB_TOKEN` set), then:
 ```bash
 uv run python .claude/skills/browser-video-tester/scripts/record_demo.py
+# Voice-over only, or render into a scratch folder for review:
+uv run python .claude/skills/browser-video-tester/scripts/record_demo.py --no-music --assets-dir artifacts/demo_run/assets
 ```
+Each narration line is synthesized before recording and every step waits for its line to finish, so speech stays in sync with on-screen actions. The scan wait is compressed to a ~6 s time-lapse in the final video.
 
 ### Custom Feature Test Script
 ```python

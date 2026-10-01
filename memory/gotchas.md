@@ -41,3 +41,13 @@ This document details non-obvious failure modes, security pitfalls, and edge cas
 - Manifest strings often contain brackets like `[ERROR]` or `<skill-name>`.
 - Rich console rendering parses unescaped brackets as style tags, causing rendering crashes or garbled text.
 - Always wrap dynamic text with `rich.markup.escape()` before console output.
+
+## 7. SAML Fallback Disables the Token for the Whole Multi-Target Scan
+- **The Problem**: `Scanner.scan()` shares one `GitHubClient` across all targets. When one target returns `403` with `x-github-sso` (e.g. `JetBrains/kotlin` for a token that is not SSO-authorized for `jetbrains-enterprise`), the client sets `_auth_disabled = True`, and **every later target** in the same scan runs anonymously.
+- **Symptom**: Scanning `JetBrains/kotlin` together with other repos exhausts the anonymous quota (60 req/h) and fails with "GitHub rate limit reached … configured token exhausted", although the token itself still has ~5000 requests left.
+- **Workarounds**: SSO-authorize the token for the enterprise (GitHub → Settings → Applications → GitHub CLI → Organization access → Grant), list SAML-protected repos last, or demo with non-SAML repos (`cursor/plugins`).
+- **Fix**: PR #17 (`fix/saml-fallback-per-owner`) scopes the anonymous fallback to the affected owner.
+
+## 8. Piper `--sentence-silence` Produces White Noise
+- The Piper build used for demo narration fills the gap inserted by `--sentence-silence` with garbage samples instead of zeros. In the final video this plays as harsh white noise in every pause between sentences.
+- `narration.py` therefore never passes `--sentence-silence`; Piper's natural sentence pauses are enough. To check a clip, compare the first-difference (high-frequency) energy with the broadband RMS over 0.25 s windows: noisy windows have HF energy above RMS.
