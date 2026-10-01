@@ -2,6 +2,7 @@
 
 **Date**: 2026-10-01
 **Scope**: workshop task "Product research", steps 1 (existing tools) and 2 (ideas).
+**Companion**: [`finance-skills.md`](finance-skills.md), a focused study of finance skills (personal, organizations, public sector) with scans of seven finance repositories.
 **Method**: two parallel web-research passes, one on catalogs and registries and one on scanners, validators and studies. A tool is listed only if its page was opened and confirmed. The headline numbers (arXiv 2601.10338, Vercel *State of Agent Skills*, Snyk ToxicSkills, Cisco skill-scanner, SkillsMP, NVIDIA SkillSpector) were then re-checked against the primary source. Claims seen only in search snippets are marked *unverified*. Counts and dates are as stated by each source on the access date.
 
 ---
