@@ -88,8 +88,8 @@ class Narrator:
                     str(out),
                     "--length-scale",
                     str(self.length_scale),
-                    "--sentence-silence",
-                    "0.25",
+                    # Do not pass --sentence-silence: some Piper builds fill the inserted
+                    # gap with garbage samples, which plays as harsh white noise.
                 ],
                 input=text,
                 capture_output=True,

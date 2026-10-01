@@ -139,4 +139,4 @@ Scanning and auditing agent skills across multiple repositories and directories:
   ```
 - Voice-over: Piper neural TTS, voice `en_US-lessac-medium` (female; override with `SKILL_ATLAS_PIPER_MODEL`), fallback `say -v Samantha`. Lines are synthesized before recording; each step waits for its line, so speech stays in sync. The "results" line is synthesized after the scan from the real counts.
 - Demo targets: `cursor/plugins` + `avalur/skill-atlas` (125 skills; the scan takes ~2 min and is compressed to a ~6 s time-lapse). Avoid `JetBrains/kotlin` unless the token is SSO-authorized (`gotchas.md` §7).
-- Outputs: `docs/assets/demo.mp4` (narrated, ~95 s), `demo.gif` (1.5× speed, 800 px), `demo-thumbnail.png`.
+- Outputs: `docs/assets/demo.mp4` (narrated, ~92 s), `demo.gif` (1.5× speed, 800 px), `demo-thumbnail.png`.
