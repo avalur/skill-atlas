@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests.visual.conftest import stabilize_page_for_screenshot
+from tests.visual.failures import record_visual_failures
 from tests.visual.image_diff import VisualDiffResult, compare_images
 from tests.visual.report import generate_visual_report
 
@@ -104,6 +105,14 @@ def test_walkthrough_visual_regression(
     page.locator("#similar-list > div").first.wait_for(state="visible", timeout=5000)
     capture_and_compare("05_similar_skills_panel")
 
+    # -------------------------------------------------------------
+    # MOMENT 6: Skill Map Panel (Clustered view, method switch)
+    # -------------------------------------------------------------
+    page.click("#map-btn")
+    page.locator("#map-section").wait_for(state="visible", timeout=5000)
+    page.locator(".map-cluster-card").first.wait_for(state="visible", timeout=5000)
+    capture_and_compare("06_skill_map_panel")
+
     # Allow browser context to flush and finalize video recording
     video_dest = visual_paths["recordings"] / "video_walkthrough.webm"
     try:
@@ -121,6 +130,16 @@ def test_walkthrough_visual_regression(
         report_path=report_file,
         video_path=video_dest if video_dest.exists() else None,
         commit_sha=commit_sha,
+    )
+
+    # Record visual regression failures for CI reporting
+    failures_file = visual_paths.get("failures", visual_paths["artifacts"] / "failures.json")
+    record_visual_failures(
+        results=results,
+        failures_path=failures_file,
+        file_path="tests/visual/test_walkthrough_screens.py",
+        line_number=28,
+        title="test_walkthrough_visual_regression",
     )
 
     # Validate that all screens matched baselines

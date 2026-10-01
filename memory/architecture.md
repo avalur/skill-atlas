@@ -83,8 +83,19 @@ Inspired by `browser-use/video-use`, the project incorporates an autonomous brow
 - **Universal MP4 Encoding**: Converts raw recordings to standard H.264/AAC `.mp4` using `ffmpeg`.
 - **Self-Evaluation & Artifacts**: Collects console errors, network failures, keyframe screenshots, `timeline.json`, and structured `report.md`.
 
-## 7. Visual Regression Testing Pipeline (`tests/visual/`)
+## 7. Visual Regression Testing & Failure Reporting (`tests/visual/`)
 - **Deterministic Fixture Server**: Spins up local FastAPI server pointing to a local Git fixture (`tests/fixtures/visual_repo/`) on an ephemeral port.
 - **Headless Playwright Chromium**: Runs with fixed viewport (`1280x720`), `device_scale_factor=1`, `prefers-reduced-motion: reduce`, suppressed blinking cursors, and WebM video recording.
 - **Pixel Comparison Engine (`image_diff.py`)**: Uses Pillow for fast (<5ms), pure-Python channel delta comparison with configurable pixel and color tolerances, highlight mask generation, and side-by-side composites.
 - **HTML Visual Report (`report.py`)**: Builds an interactive summary report at `artifacts/visual/report.html` embedding statistics, embedded walkthrough video, and side-by-side screenshot comparisons.
+- **Failure Serialization (`failures.py`)**: Tracks snapshot regressions into `artifacts/visual/failures.json` (and `tests/visual/out/failures.json`).
+- **Asset Publication (`scripts/publish-assets.sh`)**: Direct tree injection into `demo-assets` orphan branch without modifying local working tree.
+- **Failure Explainer (`scripts/visual-report.sh` / `scripts/ui-report.sh`)**: Formats terminal logs, GitHub Actions `::error` annotations, and markdown table (`Expected | Actual | Diff`) into `$GITHUB_STEP_SUMMARY`.
+
+## 8. The Skill Map Engine (`map.py`)
+Provides thematic clustering, categorical discovery, and visual mapping:
+- **Heuristic Grouping**: BFS connected components on pairwise similarity + shared keyword graph; automatically names clusters from dominant tags/words and generates rationale.
+- **Claude AI Clustering**: Non-interactive `claude -p` execution asking for structured cluster JSON; supports deterministic recording (`--record`) and replaying (`--replay`).
+- **TypeSafe Jev Classification**: Fast System One classification model via `typesafe-sdk` (`Choice` API) mapping skills into typed domain categories (`memory_and_state`, `code_and_review`, `security_and_audit`, `data_and_sync`, `general_automation`).
+- **Ground-Truth Benchmark Check**: Validated against a 10-skill manual golden benchmark verifying grouping consistency.
+- **Web UI & Endpoints**: `GET /api/scans/{scan_id}/map` powering interactive visual cluster cards with instant keyword filtering and deterministic replay support.

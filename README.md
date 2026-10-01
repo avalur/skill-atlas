@@ -46,6 +46,10 @@ As the number of skills grows, key challenges emerge:
   - Find similar and overlapping skills using fast, transparent heuristics (`skill-atlas similar`).
   - Multi-feature composite scoring (name token overlap, description TF-IDF/cosine similarity, shared tags, prompt structure, companion script names).
   - Human-readable match reasons and feature breakdown.
+- **The Skill Map & Categorical Clustering**:
+  - Thematic clustering using heuristic shared words, Claude Code AI (`--ai`), or TypeSafe Jev (`--jev`).
+  - Automatic category labeling with actionable rationales.
+  - Interactive Web UI drawer and card matrix with instant keyword filtering and deterministic replay support.
 - **Interactive Local Web Interface**:
   - Launch an interactive local catalog with `skill-atlas serve` (supporting `--reload` for development).
   - Pinned real-time status bar reporting exact operations, progress, and rate limit budget.
@@ -72,6 +76,11 @@ uv run skill-atlas scan https://github.com/JetBrains/kotlin
 
 # Find similar skills in a repository or folder
 uv run skill-atlas similar ./skills --threshold 0.5
+
+# Generate Skill Map (heuristic, Claude AI, or TypeSafe Jev)
+uv run skill-atlas map ./skills
+uv run skill-atlas map ./skills --ai
+uv run skill-atlas map ./skills --jev
 
 # Launch local interactive Web UI
 uv run skill-atlas serve

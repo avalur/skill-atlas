@@ -6,8 +6,12 @@ import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from tests.visual.failures import record_visual_failures
+
 if TYPE_CHECKING:
     from tests.visual.image_diff import VisualDiffResult
+
+__all__ = ["generate_visual_report", "record_visual_failures"]
 
 
 def generate_visual_report(

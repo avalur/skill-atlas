@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from skill_atlas import __version__
+from skill_atlas.map import classify_skills_jev, cluster_skills_ai, group_skills_heuristic
 from skill_atlas.models import ProgressEvent, ScanResult, SkillOrigin
 from skill_atlas.reporters import ConsoleReporter, JsonReporter
 from skill_atlas.scanner import Scanner
@@ -348,6 +349,156 @@ def similar_command(
         else:
             console_reporter = ConsoleReporter()
             console_reporter.render_similarity(sim_res, verbose=verbose)
+
+        raise typer.Exit(code=0)
+
+    except typer.Exit:
+        raise
+    except Exception as err:
+        typer.secho(f"Fatal error: {err}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from err
+
+
+@app.command(name="map")
+def map_command(
+    target: Annotated[
+        str,
+        typer.Argument(
+            metavar="TARGET",
+            help="Path to a skill directory, a local Git repository, or a remote Git repository URL.",
+        ),
+    ] = ".",
+    method: Annotated[
+        str,
+        typer.Option(
+            "--method",
+            "-m",
+            help="Clustering method: 'heuristic' (shared words), 'ai' (Claude CLI), or 'jev' (TypeSafe Jev).",
+            case_sensitive=False,
+        ),
+    ] = "heuristic",
+    ai: Annotated[
+        bool,
+        typer.Option(
+            "--ai",
+            help="Shortcut flag for --method ai (uses claude -p).",
+        ),
+    ] = False,
+    jev: Annotated[
+        bool,
+        typer.Option(
+            "--jev",
+            help="Shortcut flag for --method jev (uses TypeSafe AI Jev).",
+        ),
+    ] = False,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            "-t",
+            help="Similarity threshold for heuristic grouping (0.0 to 1.0).",
+        ),
+    ] = 0.35,
+    replay: Annotated[
+        str | None,
+        typer.Option(
+            "--replay",
+            help="Path to recorded JSON file to replay instead of calling live AI.",
+        ),
+    ] = None,
+    record: Annotated[
+        str | None,
+        typer.Option(
+            "--record",
+            help="Path to JSON file to record AI clustering response.",
+        ),
+    ] = None,
+    format: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-f",
+            help="Output report format (text, json).",
+            case_sensitive=False,
+        ),
+    ] = "text",
+    include_test_data: Annotated[
+        bool,
+        typer.Option(
+            "--include-test-data",
+            help="Include test-data skills in the map.",
+        ),
+    ] = False,
+    ref: Annotated[
+        str | None,
+        typer.Option(
+            "--ref",
+            help="Pinned Git reference for remote repository scans.",
+        ),
+    ] = None,
+) -> None:
+    """Generate a Skill Map grouping skills by heuristic shared words, Claude AI, or TypeSafe Jev."""
+    if target.startswith("-"):
+        typer.secho(
+            f"Error: Invalid target '{target}'. Target cannot start with '-'.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    format_clean = format.lower().strip()
+    if format_clean not in ("text", "json"):
+        typer.secho(
+            f"Error: Invalid format '{format}'. Choose 'text' or 'json'.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    effective_method = "ai" if ai else ("jev" if jev else method.lower().strip())
+    if effective_method not in ("heuristic", "ai", "jev"):
+        typer.secho(
+            f"Error: Invalid method '{method}'. Choose 'heuristic', 'ai', or 'jev'.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    try:
+        stderr_console = Console(stderr=True)
+
+        def on_progress(event: ProgressEvent) -> None:
+            if format_clean != "json" and sys.stderr.isatty():
+                stderr_console.print(f"[dim]⟳ {escape(event.message)}[/dim]", end="\r")
+
+        scanner = Scanner(include_test_data=include_test_data)
+        scan_res = scanner.scan(
+            target=target,
+            ref=ref,
+            include_test_data=include_test_data,
+            on_progress=on_progress,
+            discovery_only=True,
+        )
+
+        if format_clean != "json" and sys.stderr.isatty():
+            stderr_console.print(" " * 80, end="\r")
+
+        skills = scan_res.skills
+        if not include_test_data:
+            skills = [s for s in skills if s.origin != SkillOrigin.TEST_DATA]
+
+        if effective_method == "jev":
+            map_res = classify_skills_jev(skills, replay_file=replay, record_file=record)
+        elif effective_method == "ai":
+            map_res = cluster_skills_ai(skills, replay_file=replay, record_file=record)
+        else:
+            map_res = group_skills_heuristic(skills, threshold=threshold)
+
+        if format_clean == "json":
+            typer.echo(map_res.model_dump_json(indent=2))
+        else:
+            console_reporter = ConsoleReporter()
+            console_reporter.render_skill_map(map_res, target=target)
 
         raise typer.Exit(code=0)
 

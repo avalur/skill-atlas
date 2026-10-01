@@ -66,12 +66,13 @@ A task is considered complete only when:
 
 ## 5. Visual Regression Testing & Baseline Updates
 Visual regression testing protects the Skill Atlas Web UI against CSS breakages, alignment regressions, and unintended visual distortions:
-- **Test Suite**: Automated deterministic Playwright walkthrough (`tests/visual/test_walkthrough_screens.py`) capturing 5 key moments:
+- **Test Suite**: Automated deterministic Playwright walkthrough (`tests/visual/test_walkthrough_screens.py`) capturing 6 key moments:
   1. `01_initial_dashboard` (clean landing state in dark theme)
   2. `02_light_theme` (toggled light mode styling across all controls)
   3. `03_scan_completed_results` (summary cards, skill list, origin badges, findings)
   4. `04_filtered_results` (keyword search filter 'memory' and origin chip active)
   5. `05_similar_skills_panel` (similarity drawer open with match breakdowns and threshold)
+  6. `06_skill_map_panel` (Skill Map cluster cards grid and method selector active)
 - **Local Run**:
   ```bash
   uv run pytest tests/visual
@@ -85,5 +86,30 @@ Visual regression testing protects the Skill Atlas Web UI against CSS breakages,
   Commit the updated PNG files in `tests/visual/baselines/` in your PR branch. CI compares against the committed baselines and turns green.
 - **Intentional Breakage Test**:
   `tests/visual/test_break_page.py` injects style distortions and verifies that regressions are caught, side-by-side diff highlight images are generated (`artifacts/visual/diffs/breakage_diff.png`), and diagnostic instructions are provided.
-- **CI Pipeline**:
-  Dedicated `visual-tests` job in `.github/workflows/ci.yml` runs on `ubuntu-latest`, caches Chromium (`~/.cache/ms-playwright`), and exports artifacts (`visual-artifacts-${{ github.sha }}`) containing captured screens, walkthrough video (`video_walkthrough.webm`), diffs, and interactive HTML summary report (`report.html`).
+- **CI Pipeline & Failure Reporting**:
+  - Dedicated `visual-tests` job in `.github/workflows/ci.yml` runs on `ubuntu-latest`, caches Chromium (`~/.cache/ms-playwright`), and exports artifacts (`visual-artifacts-${{ github.sha }}`) containing captured screens, walkthrough video (`video_walkthrough.webm`), diffs, and interactive HTML summary report (`report.html`).
+  - **Explain Failures in CI**: The job is granted `permissions: contents: write`. When a visual test detects regressions, it records snapshots in `artifacts/visual/failures.json`.
+  - Step `Explain failures` (`if: failure()`) executes `scripts/visual-report.sh` (or `scripts/ui-report.sh`):
+    - Invokes `scripts/publish-assets.sh` to commit expected, actual, and diff screenshots directly to the orphan `demo-assets` branch without modifying working tree or branch history.
+    - Emits GitHub Actions `::error` annotations linking directly to the visual diff.
+    - Appends a markdown table (`Expected | Actual | Diff`) rendering screenshots side-by-side to `$GITHUB_STEP_SUMMARY`.
+    - Outputs clear copy-paste guidance for updating baselines if the visual changes were intended.
+
+## 6. The Skill Map Workflow
+Generating thematic and semantic skill maps:
+- **Heuristic Clustering (No AI)**:
+  ```bash
+  uv run skill-atlas map ./skills --threshold 0.35
+  ```
+- **AI Clustering (Claude Code CLI `claude -p`)**:
+  ```bash
+  uv run skill-atlas map ./skills --ai
+  # Replay recorded answer (offline/CI):
+  uv run skill-atlas map ./skills --ai --replay tests/fixtures/recorded_claude_map_visual.json
+  ```
+- **TypeSafe Jev Classification (System One Model)**:
+  ```bash
+  uv run skill-atlas map ./skills --jev
+  # Replay recorded answer:
+  uv run skill-atlas map ./skills --jev --replay tests/fixtures/recorded_jev_map_visual.json
+  ```
