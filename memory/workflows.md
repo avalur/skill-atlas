@@ -140,3 +140,19 @@ Scanning and auditing agent skills across multiple repositories and directories:
 - Voice-over: Piper neural TTS, voice `en_US-lessac-medium` (female; override with `SKILL_ATLAS_PIPER_MODEL`), fallback `say -v Samantha`. Lines are synthesized before recording; each step waits for its line, so speech stays in sync. The "results" line is synthesized after the scan from the real counts.
 - Demo targets: `cursor/plugins` + `avalur/skill-atlas` (125 skills; the scan takes ~2 min and is compressed to a ~6 s time-lapse). Avoid `JetBrains/kotlin` unless the token is SSO-authorized (`gotchas.md` §7).
 - Outputs: `docs/assets/demo.mp4` (narrated, ~92 s), `demo.gif` (1.5× speed, 800 px), `demo-thumbnail.png`.
+
+## 9. Organization-Wide Scan Workflow
+Audit every public repository of a GitHub org/user in one concurrent, zero-clone pass:
+```bash
+# URL forms
+uv run skill-atlas scan https://github.com/JetBrains
+uv run skill-atlas scan https://github.com/orgs/JetBrains
+# Shorthand form
+uv run skill-atlas scan org:JetBrains
+```
+Performance and filtering flags:
+- `--concurrency / -j <int>`: bounded parallel repo scans (default 8, cap 32).
+- `--include-forks` / `--include-archived`: opt in to forks/archived repos (excluded by default).
+- `--max-repos <int>`: cap the number of repositories scanned.
+
+Resilience: secondary rate limits honor `Retry-After`; primary rate-limit exhaustion or an unknown org/user exits with code 2. Live per-repository progress streams in both the CLI status line and the Web UI SSE stream.

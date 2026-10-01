@@ -25,6 +25,9 @@ With the growth of agent environments (Junie, Claude Code, OpenAI Codex, Cursor,
    - Multi-target ingestion across local directories and remote GitHub repositories in a single run via CLI arguments (`TARGETS...`), a targets file (`--targets-file / -T`), or the Web UI.
    - Audit-scoped search query (`--query / -q`) filtering skills prior to static rule evaluation to maximize scan throughput and minimize computation/network overhead.
    - Interactive multi-repository Web UI with multi-target input, dynamic repository faceted filter chips, and instant real-time search filtering.
+7. Organization-Wide Scanning (performance-oriented):
+   - Single-target expansion of an entire GitHub organization (or user) into a concurrent, zero-clone scan of all public repositories via the paginated REST API.
+   - Bounded-concurrency thread pool with shared `httpx` connection pooling, fork/archive filtering, and `Retry-After`/rate-limit resilience to maximize throughput without exceeding GitHub quotas.
 
 ---
 
@@ -218,7 +221,20 @@ To optimize scan performance across large monorepos or multi-repository audits, 
 ```bash
 skill-atlas scan [TARGETS...] [OPTIONS]
 ```
-- `TARGETS...`: Zero, one, or more paths to skill directories, local Git repositories, or remote Git repository URLs (e.g., `skill-atlas scan repo1 repo2 https://github.com/org/repo3.git`). If no positional arguments and no `--targets-file` are provided, defaults to `.` (current directory).
+- `TARGETS...`: Zero, one, or more paths to skill directories, local Git repositories, remote Git repository URLs, or **GitHub organizations** (e.g., `skill-atlas scan repo1 repo2 https://github.com/org/repo3.git`). If no positional arguments and no `--targets-file` are provided, defaults to `.` (current directory).
+
+#### Organization Targets (Org-Wide Scanning):
+A target that denotes an entire GitHub organization (or user) expands to a concurrent, zero-clone scan of all of its public repositories. Recognized org target forms:
+- `org:JetBrains` (shorthand prefix, case-insensitive).
+- `https://github.com/orgs/JetBrains` (canonical organization URL).
+- `https://github.com/JetBrains` (single-segment owner URL; reserved GitHub paths such as `settings`, `orgs`, `marketplace` are never treated as organizations).
+
+Organization scanning behavior:
+- **Enumeration**: Public repositories are fetched via the paginated GitHub REST API (`GET /orgs/{org}/repos`, 100 per page), falling back to `GET /users/{org}/repos` when the login is a user account. Archived repositories and forks are **excluded by default**.
+- **Concurrency & Performance**: Repository git trees are scanned concurrently (zero-clone, `git/trees` API) via a bounded thread pool and shared `httpx` connection pool to maximize throughput without exceeding rate limits.
+- **Resilience**: Primary rate-limit exhaustion surfaces as a clean error (exit code `2`); secondary rate limits (`HTTP 429` or `403` with a `Retry-After` header) are retried a bounded number of times after honoring the advertised backoff interval. SAML SSO-protected tokens degrade gracefully (unauthenticated fallback).
+- **Provenance**: Each discovered skill is attributed to its originating repository (`repo_name = owner/repo`), so cross-repository duplicates are never merged.
+- **Progress**: Live per-repository progress is streamed (target index, repository full name, and remaining rate limit) across both the CLI status line and the Web UI SSE stream.
 
 ### 4.2. Scan Options:
 - `--targets-file, -T <path>`: Read target repository paths or URLs from a newline-delimited text file (supports `#` comments and empty/whitespace lines).
@@ -228,6 +244,10 @@ skill-atlas scan [TARGETS...] [OPTIONS]
 - `--rules, -r [all|schema|security|discovery]`: Filter rule categories (default: `all`).
 - `--ignore <RULE_ID>`: Ignore specific rules (repeatable option).
 - `--ref <branch|tag|sha>`: Pinned Git reference for remote scans (default: remote default branch).
+- `--concurrency, -j <int>`: Maximum number of organization repositories scanned concurrently (default: `8`, hard-capped at `32`). Must be `>= 1`.
+- `--include-forks`: Include forked repositories when scanning a GitHub organization (excluded by default).
+- `--include-archived`: Include archived repositories when scanning a GitHub organization (excluded by default).
+- `--max-repos <int>`: Limit the number of organization repositories scanned (default: all). Must be `>= 1`.
 - `--include-test-data`: Treat test fixture skills as blocking for exit codes.
 - `--verbose, -v`: Verbose output (including passed checks).
 - `--version`: Display application version.
@@ -280,7 +300,7 @@ Dynamic re-weighting occurs when optional attributes (tags, files, body) are abs
 ### 4.6. Exit Codes:
 - `0`: Success (all checks passed or findings are below `--fail-on` threshold, or 0 skills matched `--query`, or similar search completed).
 - `1`: Violations found at or above `--fail-on` threshold (default: `ERROR`).
-- `2`: Fatal CLI error (invalid options, non-existent target path, empty or non-existent targets file, argument parsing failure, rate limit exhausted).
+- `2`: Fatal CLI error (invalid options, invalid `--concurrency`/`--max-repos` value, non-existent target path, empty or non-existent targets file, unknown GitHub organization/user, argument parsing failure, rate limit exhausted).
 
 ---
 

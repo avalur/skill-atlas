@@ -6,12 +6,19 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import urllib.parse
+from collections.abc import Callable
 
 import httpx
 
 from skill_atlas import __version__
 from skill_atlas.models import parse_utc_timestamp
+
+# Upper bound (seconds) for honoring Retry-After / secondary rate-limit backoff.
+MAX_RETRY_AFTER_SECONDS = 60
+# Maximum number of automatic retries for secondary rate-limit responses.
+MAX_SECONDARY_RATE_RETRIES = 3
 
 
 class RateLimitError(RuntimeError):
@@ -230,6 +237,141 @@ class GitHubClient:
         finally:
             if close_client:
                 c.close()
+
+    @staticmethod
+    def _parse_retry_after(resp: httpx.Response) -> int | None:
+        """Parse the Retry-After header (seconds) if present, bounded to a sane cap."""
+        retry_after = resp.headers.get("retry-after")
+        if retry_after is None:
+            return None
+        try:
+            seconds = int(retry_after.strip())
+        except ValueError:
+            return None
+        if seconds < 0:
+            return None
+        return min(seconds, MAX_RETRY_AFTER_SECONDS)
+
+    def _request_with_retry(
+        self,
+        client: httpx.Client,
+        url: str,
+        *,
+        sleep_fn: "Callable[[float], None] | None" = None,
+    ) -> httpx.Response:
+        """Issue a request honoring secondary rate-limit Retry-After backoff.
+
+        Primary rate-limit exhaustion is surfaced via RateLimitError by ``_request``.
+        Secondary rate limits (HTTP 429, or 403 with a Retry-After header) are retried
+        a bounded number of times after sleeping for the advertised interval.
+        """
+        sleeper = sleep_fn or time.sleep
+        attempt = 0
+        while True:
+            resp = self._request(client, url)
+            if resp.status_code in (403, 429):
+                wait = self._parse_retry_after(resp)
+                if wait is not None and attempt < MAX_SECONDARY_RATE_RETRIES:
+                    attempt += 1
+                    sleeper(float(wait))
+                    continue
+            return resp
+
+    def fetch_org_repos(
+        self,
+        client: httpx.Client,
+        org: str,
+        *,
+        include_forks: bool = False,
+        include_archived: bool = False,
+        max_repos: int | None = None,
+        per_page: int = 100,
+        sleep_fn: "Callable[[float], None] | None" = None,
+    ) -> list[dict]:
+        """Enumerate public repositories of a GitHub organization (or user).
+
+        Uses the paginated ``GET /orgs/{org}/repos`` endpoint, falling back to
+        ``GET /users/{org}/repos`` when the login refers to a user account.
+        Archived repositories and forks are excluded by default.
+
+        Returns a list of repository metadata dicts sorted by ``full_name``.
+        """
+        page_size = max(1, min(per_page, 100))
+        endpoints = (
+            f"{self.api_base}/orgs/{org}/repos",
+            f"{self.api_base}/users/{org}/repos",
+        )
+
+        base_url: str | None = None
+        for endpoint in endpoints:
+            probe = self._request_with_retry(
+                client,
+                f"{endpoint}?per_page={page_size}&sort=full_name&page=1",
+                sleep_fn=sleep_fn,
+            )
+            if probe.status_code == 404:
+                continue
+            if probe.status_code != 200:
+                raise ValueError(
+                    f"Failed to enumerate repositories for '{org}' (HTTP {probe.status_code})"
+                )
+            base_url = endpoint
+            first_page = probe
+            break
+        else:
+            raise ValueError(f"GitHub organization or user '{org}' not found")
+
+        repos: list[dict] = []
+
+        def consume(resp: httpx.Response) -> None:
+            data = resp.json()
+            if not isinstance(data, list):
+                return
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                if not include_forks and item.get("fork"):
+                    continue
+                if not include_archived and item.get("archived"):
+                    continue
+                repos.append(
+                    {
+                        "name": item.get("name"),
+                        "full_name": item.get("full_name"),
+                        "fork": bool(item.get("fork")),
+                        "archived": bool(item.get("archived")),
+                        "default_branch": item.get("default_branch"),
+                        "html_url": item.get("html_url"),
+                        "clone_url": item.get("clone_url"),
+                        "size": item.get("size", 0),
+                    }
+                )
+
+        consume(first_page)
+        page = 2
+        # Continue paginating while a full page was returned (more may remain).
+        last_count = len(first_page.json()) if isinstance(first_page.json(), list) else 0
+        while last_count >= page_size:
+            if max_repos is not None and len(repos) >= max_repos:
+                break
+            resp = self._request_with_retry(
+                client,
+                f"{base_url}?per_page={page_size}&sort=full_name&page={page}",
+                sleep_fn=sleep_fn,
+            )
+            if resp.status_code != 200:
+                break
+            payload = resp.json()
+            last_count = len(payload) if isinstance(payload, list) else 0
+            if last_count == 0:
+                break
+            consume(resp)
+            page += 1
+
+        repos.sort(key=lambda r: (r.get("full_name") or "").lower())
+        if max_repos is not None:
+            repos = repos[:max_repos]
+        return repos
 
     def get_default_branch(self, client: httpx.Client, owner: str, repo: str) -> str:
         """Determine default branch of repository (main, master, etc.)."""

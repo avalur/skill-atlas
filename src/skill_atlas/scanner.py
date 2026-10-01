@@ -10,7 +10,9 @@ import httpx
 
 from skill_atlas import __version__
 from skill_atlas.discovery.local import discover_local_skills
+from skill_atlas.discovery.org import DEFAULT_ORG_CONCURRENCY, discover_org_skills
 from skill_atlas.discovery.remote import discover_remote_skills, is_remote_target
+from skill_atlas.git.client import is_org_target, parse_org_target
 from skill_atlas.git.github import GitHubClient
 from skill_atlas.models import (
     DuplicateRef,
@@ -232,14 +234,18 @@ class Scanner:
         http_client: httpx.Client | None = None,
         gh_client: GitHubClient | None = None,
         discovery_only: bool = False,
+        concurrency: int = DEFAULT_ORG_CONCURRENCY,
+        include_forks: bool = False,
+        include_archived: bool = False,
+        max_repos: int | None = None,
     ) -> ScanResult:
-        """Scan one or more target paths or Git URLs for AI Agent Skills."""
+        """Scan one or more target paths, Git URLs, or GitHub organizations for AI Agent Skills."""
         normalized_targets = normalize_targets(targets=targets, target=target)
         t0 = time.time()
         effective_include_test_data = (
             self.include_test_data if include_test_data is None else include_test_data
         )
-        has_remote = any(is_remote_target(t) for t in normalized_targets)
+        has_remote = any(is_remote_target(t) or is_org_target(t) for t in normalized_targets)
         effective_gh_client = gh_client or (GitHubClient() if has_remote else None)
         scan_warnings: list[str] = []
 
@@ -309,7 +315,26 @@ class Scanner:
                 check_cancel()
                 target_prefix = f"[{target_idx}/{total_targets}] " if total_targets > 1 else ""
 
-                if is_remote_target(target_str):
+                if is_org_target(target_str):
+                    org_name = parse_org_target(target_str) or target_str
+                    target_progress = make_target_progress(
+                        target_idx, f"org:{org_name}", target_prefix
+                    )
+                    raw_skills = discover_org_skills(
+                        org_name,
+                        ref=ref,
+                        gh_client=effective_gh_client,
+                        http_client=http_client,
+                        on_progress=target_progress if on_progress else None,
+                        cancel_event=cancel_event,
+                        discovery_only=discovery_only,
+                        warnings=scan_warnings,
+                        concurrency=concurrency,
+                        include_forks=include_forks,
+                        include_archived=include_archived,
+                        max_repos=max_repos,
+                    )
+                elif is_remote_target(target_str):
                     target_progress = make_target_progress(target_idx, target_str, target_prefix)
                     raw_skills = discover_remote_skills(
                         url=target_str,
