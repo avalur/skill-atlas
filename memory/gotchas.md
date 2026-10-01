@@ -6,7 +6,9 @@ This document details non-obvious failure modes, security pitfalls, and edge cas
 - **The Problem**: GitHub tokens obtained via `gh auth token` or `GITHUB_TOKEN` fail against repositories owned by SAML SSO-enforced organizations (e.g. `JetBrains/kotlin`). The API responds with `HTTP 403 Forbidden` and header `x-github-sso: required; url=...`.
 - **The Paradox**: The repository is completely public, but an authenticated token without SSO authorization is rejected.
 - **The Solution**: In `src/skill_atlas/git/github.py`, when a request encounters `403` with `x-github-sso` (or `401`), it automatically retries **anonymously** (stripping the `Authorization` header).
-  - For public repositories, anonymous requests succeed (`HTTP 200`). Subsequent requests for the scan session stay unauthenticated.
+  - For public repositories, anonymous requests succeed (`HTTP 200`). Subsequent requests **for the same owner/organization** stay unauthenticated; other owners in a multi-repository scan keep using the token (`GitHubClient._anonymous_owners`).
+  - A `401` (invalid or revoked token) is different: it disables the token for every owner (`GitHubClient._token_invalid`).
+  - Pagination links (`/repositories/{id}/...`) carry no owner, so callers pass `owner=` to `_request()` explicitly.
   - For private repositories, anonymous requests return `404`, and the scanner surfaces the SAML SSO authorization URL to the user.
 
 ## 2. Rule `SCH-006` and Multi-Level Path Resolution
@@ -40,7 +42,17 @@ This document details non-obvious failure modes, security pitfalls, and edge cas
 - Rich console rendering parses unescaped brackets as style tags, causing rendering crashes or garbled text.
 - Always wrap dynamic text with `rich.markup.escape()` before console output.
 
-## 7. GitHub Organization Scanning Pitfalls
+## 7. SAML Fallback Disables the Token for the Whole Multi-Target Scan
+- **The Problem**: `Scanner.scan()` shares one `GitHubClient` across all targets. When one target returns `403` with `x-github-sso` (e.g. `JetBrains/kotlin` for a token that is not SSO-authorized for `jetbrains-enterprise`), the client sets `_auth_disabled = True`, and **every later target** in the same scan runs anonymously.
+- **Symptom**: Scanning `JetBrains/kotlin` together with other repos exhausts the anonymous quota (60 req/h) and fails with "GitHub rate limit reached … configured token exhausted", although the token itself still has ~5000 requests left.
+- **Workarounds**: SSO-authorize the token for the enterprise (GitHub → Settings → Applications → GitHub CLI → Organization access → Grant), list SAML-protected repos last, or demo with non-SAML repos (`cursor/plugins`).
+- **Fix**: PR #17 (`fix/saml-fallback-per-owner`) scopes the anonymous fallback to the affected owner.
+
+## 8. Piper `--sentence-silence` Produces White Noise
+- The Piper build used for demo narration fills the gap inserted by `--sentence-silence` with garbage samples instead of zeros. In the final video this plays as harsh white noise in every pause between sentences.
+- `narration.py` therefore never passes `--sentence-silence`; Piper's natural sentence pauses are enough. To check a clip, compare the first-difference (high-frequency) energy with the broadband RMS over 0.25 s windows: noisy windows have HF energy above RMS.
+
+## 9. GitHub Organization Scanning Pitfalls
 - **Ambiguous owner URLs**: `https://github.com/<name>` can be an org, a user, or a reserved GitHub route. `parse_org_target()` excludes a frozen set of reserved paths (`settings`, `orgs`, `marketplace`, `login`, `search`, ...) and anything ending in `.git`. Two-segment repo URLs must be handled by the normal remote path, so org detection must run BEFORE remote detection in `scanner.scan`.
 - **Org vs user endpoint**: `GET /orgs/{org}/repos` returns 404 for user accounts; always fall back to `GET /users/{org}/repos` before declaring the login not found.
 - **Pagination stop condition**: Do not rely on a `Link` header alone in mocks; stop when a page returns fewer than `per_page` items (and guard `max_repos`). Requesting `per_page>100` is silently capped by GitHub to 100 — clamp locally so page-size math stays correct.

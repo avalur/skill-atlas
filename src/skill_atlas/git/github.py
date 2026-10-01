@@ -71,6 +71,11 @@ def _resolve_gh_cli_token() -> str | None:
     return _cached_gh_token
 
 
+_OWNER_URL_PATTERN = re.compile(
+    r"^https://(?:api\.github\.com/repos|raw\.githubusercontent\.com)/([^/?#]+)/"
+)
+
+
 class GitHubClient:
     """Client for scanning GitHub repositories via REST API and raw downloads."""
 
@@ -85,14 +90,34 @@ class GitHubClient:
         self.raw_base = "https://raw.githubusercontent.com"
         self.rate_limit_remaining: int | None = None
         self.rate_limit_reset: int | None = None
-        self._auth_disabled: bool = False
+        # An invalid or revoked token (401) is unusable everywhere, while SAML SSO
+        # enforcement (403 + x-github-sso) only applies to one organization. Track the
+        # two separately so one SAML-protected target does not downgrade the rest of a
+        # multi-repository scan to anonymous requests.
+        self._token_invalid: bool = False
+        self._anonymous_owners: set[str] = set()
 
-    def _get_headers(self, with_auth: bool = True) -> dict[str, str]:
+    @staticmethod
+    def _owner_from_url(url: str) -> str | None:
+        match = _OWNER_URL_PATTERN.match(url)
+        return match.group(1).lower() if match else None
+
+    def uses_auth_for(self, owner: str | None) -> bool:
+        """Whether requests for repositories of `owner` are sent with the token."""
+        if not self.token or self._token_invalid:
+            return False
+        return owner is None or owner.lower() not in self._anonymous_owners
+
+    def _disable_auth_for(self, owner: str | None) -> None:
+        if owner:
+            self._anonymous_owners.add(owner.lower())
+
+    def _get_headers(self, with_auth: bool = True, owner: str | None = None) -> dict[str, str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": f"SkillAtlas-Scanner/{__version__}",
         }
-        if with_auth and self.token and not self._auth_disabled:
+        if with_auth and self.uses_auth_for(owner):
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
@@ -127,18 +152,24 @@ class GitHubClient:
         except Exception:  # noqa: BLE001
             return False
 
-    def _request(self, client: httpx.Client, url: str) -> httpx.Response:
-        """Execute request with automatic fallback to unauthenticated request on 401/403."""
-        resp = client.get(url, headers=self._get_headers(with_auth=True))
+    def _request(self, client: httpx.Client, url: str, owner: str | None = None) -> httpx.Response:
+        """Execute request with automatic fallback to unauthenticated request on 401/403.
+
+        `owner` scopes the SAML fallback; it is parsed from the URL when not given
+        (pagination links of the form /repositories/{id}/... carry no owner).
+        """
+        owner = owner or self._owner_from_url(url)
+        uses_auth = self.uses_auth_for(owner)
+        resp = client.get(url, headers=self._get_headers(with_auth=True, owner=owner))
         self._record_rate_limit(resp)
 
-        if resp.status_code in (401, 403) and self.token and not self._auth_disabled:
+        if resp.status_code in (401, 403) and uses_auth:
             if resp.status_code == 401:
                 # Token is invalid or revoked: try unauthenticated request
                 resp_unauth = client.get(url, headers=self._get_headers(with_auth=False))
                 self._record_rate_limit(resp_unauth)
                 if resp_unauth.status_code == 200:
-                    self._auth_disabled = True
+                    self._token_invalid = True
                     return resp_unauth
                 raise ValueError(
                     "GitHub authentication failed: configured GITHUB_TOKEN is invalid or revoked"
@@ -157,7 +188,7 @@ class GitHubClient:
 
             if resp_unauth.status_code == 200:
                 if is_sso:
-                    self._auth_disabled = True
+                    self._disable_auth_for(owner)
                 return resp_unauth
 
             if is_sso:
@@ -174,7 +205,7 @@ class GitHubClient:
                         is_public = self._is_repo_public(client, owner, repo)
 
                     if is_public:
-                        self._auth_disabled = True
+                        self._disable_auth_for(owner)
                         return resp_unauth
 
                 # Repository is private or requires SAML SSO
@@ -345,7 +376,7 @@ class GitHubClient:
     def get_default_branch(self, client: httpx.Client, owner: str, repo: str) -> str:
         """Determine default branch of repository (main, master, etc.)."""
         url = f"{self.api_base}/repos/{owner}/{repo}"
-        resp = self._request(client, url)
+        resp = self._request(client, url, owner=owner)
         if resp.status_code == 404:
             raise ValueError(f"GitHub repository '{owner}/{repo}' not found")
         if resp.status_code == 200:
@@ -368,7 +399,7 @@ class GitHubClient:
         branches_to_try = (branch,) if is_explicit_ref else (branch, "master", "main")
         for target_branch in branches_to_try:
             url = f"{self.api_base}/repos/{owner}/{repo}/git/trees/{target_branch}?recursive=1"
-            resp = self._request(client, url)
+            resp = self._request(client, url, owner=owner)
             if resp.status_code == 404:
                 continue
             if resp.status_code == 200:
@@ -387,7 +418,8 @@ class GitHubClient:
         quoted_path = urllib.parse.quote(file_path.lstrip("/"))
         url = f"{self.raw_base}/{owner}/{repo}/{branch}/{quoted_path}"
         headers = {"User-Agent": f"SkillAtlas-Scanner/{__version__}"}
-        if self.token and not self._auth_disabled:
+        uses_auth = self.uses_auth_for(owner)
+        if uses_auth:
             headers["Authorization"] = f"Bearer {self.token}"
 
         resp = client.get(url, headers=headers)
@@ -397,7 +429,7 @@ class GitHubClient:
 
         # If authenticated raw request failed (e.g. 404 due to token/SAML restrictions on public repos),
         # fall back to unauthenticated raw request
-        if resp.status_code in (401, 403, 404) and self.token and not self._auth_disabled:
+        if resp.status_code in (401, 403, 404) and uses_auth:
             unauth_headers = {"User-Agent": f"SkillAtlas-Scanner/{__version__}"}
             resp_unauth = client.get(url, headers=unauth_headers)
             self._record_rate_limit(resp_unauth)
@@ -406,7 +438,7 @@ class GitHubClient:
 
         # Fallback to contents API with raw Accept header
         api_url = f"{self.api_base}/repos/{owner}/{repo}/contents/{quoted_path}?ref={branch}"
-        api_headers = self._get_headers(with_auth=True)
+        api_headers = self._get_headers(with_auth=True, owner=owner)
         api_headers["Accept"] = "application/vnd.github.raw"
         resp_api = client.get(api_url, headers=api_headers)
         self._record_rate_limit(resp_api)
@@ -439,7 +471,7 @@ class GitHubClient:
         if ref:
             url += f"&sha={urllib.parse.quote(ref)}"
 
-        resp = self._request(client, url)
+        resp = self._request(client, url, owner=owner)
         if resp.status_code != 200:
             return None, None, None, None
 
@@ -463,7 +495,7 @@ class GitHubClient:
             match = re.search(r'<([^>]+)>;\s*rel="last"', link_header)
             if match:
                 last_url = match.group(1)
-                resp_last = self._request(client, last_url)
+                resp_last = self._request(client, last_url, owner=owner)
                 if resp_last.status_code == 200:
                     last_commits = resp_last.json()
                     if isinstance(last_commits, list) and len(last_commits) > 0:

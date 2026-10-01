@@ -131,7 +131,17 @@ Scanning and auditing agent skills across multiple repositories and directories:
   ```
   Skills not matching the query (matching across name, description, tags, repo_name, and path) are filtered out prior to static security and schema rule evaluation, accelerating scans and saving resources.
 
-## 8. Organization-Wide Scan Workflow
+## 8. Narrated Demo Recording (README Media)
+- Start the server detached so it outlives agent background-task limits: `nohup uv run skill-atlas serve --port 8765 > /tmp/skill-atlas-server.log 2>&1 &` (with `GITHUB_TOKEN` set).
+- Record into a scratch folder first, review frames, then copy to `docs/assets/`:
+  ```bash
+  uv run python .claude/skills/browser-video-tester/scripts/record_demo.py --assets-dir artifacts/demo_run/assets
+  ```
+- Voice-over: Piper neural TTS, voice `en_US-lessac-medium` (female; override with `SKILL_ATLAS_PIPER_MODEL`), fallback `say -v Samantha`. Lines are synthesized before recording; each step waits for its line, so speech stays in sync. The "results" line is synthesized after the scan from the real counts.
+- Demo targets: `cursor/plugins` + `avalur/skill-atlas` (125 skills; the scan takes ~2 min and is compressed to a ~6 s time-lapse). Avoid `JetBrains/kotlin` unless the token is SSO-authorized (`gotchas.md` §7).
+- Outputs: `docs/assets/demo.mp4` (narrated, ~92 s), `demo.gif` (1.5× speed, 800 px), `demo-thumbnail.png`.
+
+## 9. Organization-Wide Scan Workflow
 Audit every public repository of a GitHub org/user in one concurrent, zero-clone pass:
 ```bash
 # URL forms

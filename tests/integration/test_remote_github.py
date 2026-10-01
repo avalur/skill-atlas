@@ -222,7 +222,7 @@ def test_remote_saml_sso_fallback_public_repo():
         )
         assert result.summary.total_skills == 1
         assert result.skills[0].name == "sso-public"
-        assert gh_client._auth_disabled is True
+        assert gh_client.uses_auth_for("example") is False
 
 
 def test_remote_saml_sso_private_repo_raises_error():
@@ -250,3 +250,79 @@ def test_remote_saml_sso_private_repo_raises_error():
                 http_client=http_client,
                 gh_client=gh_client,
             )
+
+
+def test_remote_saml_fallback_is_scoped_to_one_owner():
+    """A SAML-protected target must not downgrade later targets of other owners to anonymous."""
+    saml_files = {
+        ".claude/skills/saml-skill/SKILL.md": (
+            "---\nname: saml-skill\ndescription: Skill in a SAML-protected public repo.\n---\n"
+        )
+    }
+    token_files = {
+        ".claude/skills/token-skill/SKILL.md": (
+            "---\nname: token-skill\ndescription: Skill readable only with the token.\n---\n"
+        )
+    }
+    saml_transport = create_fake_github_transport(
+        files=saml_files, simulate_saml_sso=True, private_repo=False
+    )
+    token_transport = create_fake_github_transport(files=token_files)
+    anonymous_token_org_requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "/saml-org/" in url:
+            return saml_transport.handle_request(request)
+        if not request.headers.get("Authorization"):
+            # Anonymous quota is exhausted: only the token can read token-org.
+            anonymous_token_org_requests.append(url)
+            return httpx.Response(
+                403,
+                headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1780000000"},
+                json={"message": "API rate limit exceeded"},
+            )
+        return token_transport.handle_request(request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        gh_client = GitHubClient(token="token-without-sso-for-saml-org")
+        result = Scanner().scan(
+            targets=[
+                "https://github.com/saml-org/public-repo",
+                "https://github.com/token-org/repo",
+            ],
+            http_client=http_client,
+            gh_client=gh_client,
+        )
+
+    assert sorted(s.name for s in result.skills) == ["saml-skill", "token-skill"]
+    assert anonymous_token_org_requests == []
+    assert gh_client.uses_auth_for("saml-org") is False
+    assert gh_client.uses_auth_for("token-org") is True
+
+
+def test_remote_invalid_token_disables_auth_for_all_owners():
+    """A revoked token (401) is unusable everywhere, unlike a per-organization SAML 403."""
+    files = {
+        ".claude/skills/public-skill/SKILL.md": (
+            "---\nname: public-skill\ndescription: Skill in a public repository.\n---\n"
+        )
+    }
+    public_transport = create_fake_github_transport(files=files)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("Authorization"):
+            return httpx.Response(401, json={"message": "Bad credentials"})
+        return public_transport.handle_request(request)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        gh_client = GitHubClient(token="revoked-token")
+        result = Scanner().scan(
+            target="https://github.com/example/public-repo",
+            http_client=http_client,
+            gh_client=gh_client,
+        )
+
+    assert [s.name for s in result.skills] == ["public-skill"]
+    assert gh_client.uses_auth_for("example") is False
+    assert gh_client.uses_auth_for("another-org") is False
