@@ -88,6 +88,11 @@ Instead, Skill Atlas employs a lightweight API-driven approach:
   - Quick sample target loader button (`Load Sample Repos`).
   - Dynamic repository filter chips (`All Repos (<count>)`, `<repo_name> (<count>)`) automatically populated from scan results.
   - Unified client-side filter engine combining repository filter chips, origin filter chips, pass/fail status filters, and instant keyword search without page reloads.
+- **Starred Skills (Client-Side Favorites)**:
+  - Each catalog card and the skill detail modal expose an animated SVG star toggle (`createStarButton`). Active state renders a filled gold/amber star in both light and dark themes.
+  - Favorites persist in browser `localStorage` under `skill_atlas_starred_skills` as a JSON array of stable keys (`repo_name::path::name`), surviving reloads and re-scans. `localStorage` access is defensively wrapped to tolerate private-mode/quota errors.
+  - A `★ Starred (<count>)` filter chip (`toggleStarredFilter`) composes orthogonally with the other filters and is preserved when switching origin chips. The live count is refreshed on render (`updateStarredCount`).
+- **Skill Detail Modal**: Clicking a skill name opens an overlay modal (`openSkillDetail`) with description, provenance metadata, tags, findings, and a labelled star toggle. Dismissed via close button, backdrop click, or `Escape` (`modalKeyHandler`).
 - **Security Protections**:
   - `TrustedHostMiddleware` restricting host header.
   - `Origin` validation rejecting foreign origins.

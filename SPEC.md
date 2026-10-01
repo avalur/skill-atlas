@@ -249,6 +249,8 @@ skill-atlas serve [OPTIONS]
   - **Theme switcher**: Toggle between light and dark modes with manual toggle and system preference detection (persisted in `localStorage`).
   - **Interactive skill catalog**: Cards with pass/fail badges, findings breakdown, repository provenance, and duplicate origin badges.
   - **Status filtering**: Quick toggles for `All statuses`, `Passed only`, `Failed only`.
+  - **Starred skills (favorites)**: Users can star/unstar any skill via an animated SVG star button on each catalog card and inside the skill detail modal. Starred skills are persisted client-side in `localStorage` under the key `skill_atlas_starred_skills` (storing a stable `repo::path::name` key per skill), so favorites survive page reloads and re-scans. A `★ Starred (<count>)` filter chip isolates only the starred skills, operates independently from origin/repository/status filters, and reflects both light and dark themes.
+  - **Skill detail modal**: Clicking a skill name opens a modal with the full description, path, repository, tags, and findings, plus a prominent star toggle. The modal is dismissible via the close button, backdrop click, or the `Escape` key.
   - **Interactive Similar Skills panel**: Customizable similarity threshold (`0.3` - `0.8`), cross-repository match discovery, and direct per-skill similarity search from catalog items.
   - **Export Results**: Download full scan results as JSON conforming to the multi-target schema.
 
