@@ -16,6 +16,7 @@ This document captures verified findings, resolved review items, and potential f
   - Added test-data detection for `integration-tests?` directories.
 
 ## 2. Future Improvements Backlog
+- **[Bug] SAML fallback is client-wide**: In multi-target scans one SAML-protected repo switches the shared `GitHubClient` to anonymous mode for all remaining targets (see `gotchas.md` §7). Track `_auth_disabled` per owner/organization.
 - **GitLab & Bitbucket Remote Discovery**: Extend remote discovery engine to support GitLab and Bitbucket REST APIs using the same zero-clone tree inspection approach.
 - **Custom Rule Plugins**: Allow loading user-defined Python validation rules dynamically from a local configuration directory.
 - **Similarity Visualization**: Add an interactive graph view to the Web UI connecting similar skills across repositories.

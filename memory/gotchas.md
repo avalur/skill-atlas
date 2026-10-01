@@ -39,3 +39,9 @@ This document details non-obvious failure modes, security pitfalls, and edge cas
 - Manifest strings often contain brackets like `[ERROR]` or `<skill-name>`.
 - Rich console rendering parses unescaped brackets as style tags, causing rendering crashes or garbled text.
 - Always wrap dynamic text with `rich.markup.escape()` before console output.
+
+## 7. SAML Fallback Disables the Token for the Whole Multi-Target Scan
+- **The Problem**: `Scanner.scan()` shares one `GitHubClient` across all targets. When one target returns `403` with `x-github-sso` (e.g. `JetBrains/kotlin` for a token that is not SSO-authorized for `jetbrains-enterprise`), the client sets `_auth_disabled = True`, and **every later target** in the same scan runs anonymously.
+- **Symptom**: Scanning `JetBrains/kotlin` together with other repos exhausts the anonymous quota (60 req/h) and fails with "GitHub rate limit reached … configured token exhausted", although the token itself still has ~5000 requests left.
+- **Workarounds**: SSO-authorize the token for the enterprise (GitHub → Settings → Applications → GitHub CLI → Organization access → Grant), list SAML-protected repos last, or demo with non-SAML repos (`cursor/plugins`).
+- **Fix pending**: make the anonymous fallback per repository owner instead of per client (see `known-issues.md`).
