@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from skill_atlas import __version__
+from skill_atlas.discovery.org import DEFAULT_ORG_CONCURRENCY
 from skill_atlas.map import classify_skills_jev, cluster_skills_ai, group_skills_heuristic
 from skill_atlas.models import ProgressEvent, ScanResult, SkillOrigin
 from skill_atlas.reporters import ConsoleReporter, JsonReporter
@@ -130,6 +131,35 @@ def scan_command(
             help="Scan bundled sample test fixtures.",
         ),
     ] = False,
+    concurrency: Annotated[
+        int,
+        typer.Option(
+            "--concurrency",
+            "-j",
+            help="Max concurrent repositories to scan when auditing a GitHub organization.",
+        ),
+    ] = DEFAULT_ORG_CONCURRENCY,
+    include_forks: Annotated[
+        bool,
+        typer.Option(
+            "--include-forks",
+            help="Include forked repositories when scanning a GitHub organization.",
+        ),
+    ] = False,
+    include_archived: Annotated[
+        bool,
+        typer.Option(
+            "--include-archived",
+            help="Include archived repositories when scanning a GitHub organization.",
+        ),
+    ] = False,
+    max_repos: Annotated[
+        int | None,
+        typer.Option(
+            "--max-repos",
+            help="Limit the number of organization repositories scanned (default: all).",
+        ),
+    ] = None,
 ) -> None:
     """Scan skills for structural consistency and security vulnerabilities."""
     raw_targets = list(targets) if targets else []
@@ -192,6 +222,22 @@ def scan_command(
     normalized_targets = normalize_targets(combined_targets)
     query_clean = query.strip() if (query and query.strip()) else None
 
+    if concurrency < 1:
+        typer.secho(
+            f"Error: Invalid --concurrency '{concurrency}'. Must be >= 1.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    if max_repos is not None and max_repos < 1:
+        typer.secho(
+            f"Error: Invalid --max-repos '{max_repos}'. Must be >= 1.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
     format_clean = format.lower().strip()
     if format_clean not in ("text", "json"):
         typer.secho(
@@ -238,6 +284,10 @@ def scan_command(
             query=query_clean,
             include_test_data=include_test_data,
             on_progress=on_progress,
+            concurrency=concurrency,
+            include_forks=include_forks,
+            include_archived=include_archived,
+            max_repos=max_repos,
         )
 
         # Clear progress line if printed

@@ -17,7 +17,8 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from skill_atlas import __version__
-from skill_atlas.git.client import parse_github_url
+from skill_atlas.discovery.org import DEFAULT_ORG_CONCURRENCY
+from skill_atlas.git.client import is_org_target, parse_github_url
 from skill_atlas.git.github import GitHubClient
 from skill_atlas.models import (
     ProgressEvent,
@@ -1036,6 +1037,10 @@ class ScanRequest(BaseModel):
     rules: Literal["all", "schema", "security", "discovery"] = "all"
     ignore: list[str] = Field(default_factory=list)
     include_test_data: bool = False
+    concurrency: int = DEFAULT_ORG_CONCURRENCY
+    include_forks: bool = False
+    include_archived: bool = False
+    max_repos: int | None = None
 
 
 class ScanJob:
@@ -1120,6 +1125,10 @@ class JobManager:
                         include_test_data=job.request.include_test_data,
                         on_progress=job.add_event,
                         cancel_event=job.cancel_event,
+                        concurrency=job.request.concurrency,
+                        include_forks=job.request.include_forks,
+                        include_archived=job.request.include_archived,
+                        max_repos=job.request.max_repos,
                     )
                     with job.lock:
                         if job.status != "cancelled":
@@ -1242,7 +1251,7 @@ def create_app(
         # Input validation per SPEC
         if not allow_local:
             for t in effective_targets:
-                if parse_github_url(t) is None:
+                if parse_github_url(t) is None and not is_org_target(t):
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail="Only GitHub repository URLs are supported for scanning",

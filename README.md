@@ -39,6 +39,11 @@ As the number of skills grows, key challenges emerge:
   - Scanning local directories and local Git repositories.
   - Remote Git repository ingestion directly via GitHub REST API (zero disk waste, no cloning).
   - Pinned branch/tag/commit reference support (`--ref`).
+- **Organization-Wide Scanning (performance-oriented)**:
+  - Scan every public repository of a GitHub organization (or user) with a single target: `org:JetBrains`, `https://github.com/orgs/JetBrains`, or `https://github.com/JetBrains`.
+  - Concurrent, zero-clone repository tree scanning with bounded concurrency (`--concurrency / -j`) and shared connection pooling for high throughput.
+  - Archived repositories and forks excluded by default (`--include-archived`, `--include-forks`); cap the scan with `--max-repos`.
+  - Paginated REST enumeration with `Retry-After`, rate-limit, and SAML SSO resilience, plus live per-repository progress.
 - **Layout Intelligence & Provenance**:
   - **Origin Classification**: Automatically labels skills by category (`agent-config`, `product`, `test-data`, `standalone`).
   - **Deduplication & Stale Copy Detection (`DSC-001`)**: Groups duplicate copies across `.claude`, `.agents`, etc., displays the newest copy, and alerts if copies have drifted.
@@ -85,6 +90,10 @@ uv run skill-atlas scan -T targets.txt
 
 # Scan remote GitHub repository without cloning
 uv run skill-atlas scan https://github.com/JetBrains/kotlin
+
+# Scan an entire GitHub organization concurrently (zero-clone)
+uv run skill-atlas scan https://github.com/JetBrains
+uv run skill-atlas scan org:JetBrains --concurrency 12 --max-repos 100
 
 # Find similar skills in a repository or folder
 uv run skill-atlas similar ./skills --threshold 0.5

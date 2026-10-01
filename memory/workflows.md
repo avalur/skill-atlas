@@ -130,3 +130,19 @@ Scanning and auditing agent skills across multiple repositories and directories:
   uv run skill-atlas scan -T targets.txt -q git
   ```
   Skills not matching the query (matching across name, description, tags, repo_name, and path) are filtered out prior to static security and schema rule evaluation, accelerating scans and saving resources.
+
+## 8. Organization-Wide Scan Workflow
+Audit every public repository of a GitHub org/user in one concurrent, zero-clone pass:
+```bash
+# URL forms
+uv run skill-atlas scan https://github.com/JetBrains
+uv run skill-atlas scan https://github.com/orgs/JetBrains
+# Shorthand form
+uv run skill-atlas scan org:JetBrains
+```
+Performance and filtering flags:
+- `--concurrency / -j <int>`: bounded parallel repo scans (default 8, cap 32).
+- `--include-forks` / `--include-archived`: opt in to forks/archived repos (excluded by default).
+- `--max-repos <int>`: cap the number of repositories scanned.
+
+Resilience: secondary rate limits honor `Retry-After`; primary rate-limit exhaustion or an unknown org/user exits with code 2. Live per-repository progress streams in both the CLI status line and the Web UI SSE stream.

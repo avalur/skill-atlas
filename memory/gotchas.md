@@ -39,3 +39,11 @@ This document details non-obvious failure modes, security pitfalls, and edge cas
 - Manifest strings often contain brackets like `[ERROR]` or `<skill-name>`.
 - Rich console rendering parses unescaped brackets as style tags, causing rendering crashes or garbled text.
 - Always wrap dynamic text with `rich.markup.escape()` before console output.
+
+## 7. GitHub Organization Scanning Pitfalls
+- **Ambiguous owner URLs**: `https://github.com/<name>` can be an org, a user, or a reserved GitHub route. `parse_org_target()` excludes a frozen set of reserved paths (`settings`, `orgs`, `marketplace`, `login`, `search`, ...) and anything ending in `.git`. Two-segment repo URLs must be handled by the normal remote path, so org detection must run BEFORE remote detection in `scanner.scan`.
+- **Org vs user endpoint**: `GET /orgs/{org}/repos` returns 404 for user accounts; always fall back to `GET /users/{org}/repos` before declaring the login not found.
+- **Pagination stop condition**: Do not rely on a `Link` header alone in mocks; stop when a page returns fewer than `per_page` items (and guard `max_repos`). Requesting `per_page>100` is silently capped by GitHub to 100 — clamp locally so page-size math stays correct.
+- **Primary vs secondary rate limits**: `GitHubClient._request` raises `RateLimitError` only when `X-RateLimit-Remaining==0` or the body mentions "rate limit". Secondary limits appear as HTTP 429 or 403 with a `Retry-After` header and must be retried via `_request_with_retry` (bounded, capped sleep) — do NOT let them raise immediately.
+- **Thread safety**: `httpx.Client` is safe for concurrent requests across threads; reuse one shared client with an enlarged `httpx.Limits` pool. A `RateLimitError` raised in any worker must set the shared `cancel_event` and be re-raised after the pool drains so the CLI returns exit code 2.
+- **Offline testing**: `uv sync` fails offline (blocked `pillow` download) and neither system python nor `.venv` ships `httpx`/`pytest`, so `tests/test_org_scan.py` runs only in CI. Validate locally with `py_compile` and the bundled ruff binary.

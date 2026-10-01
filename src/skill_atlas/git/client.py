@@ -22,6 +22,72 @@ def parse_github_url(url: str) -> tuple[str, str] | None:
     return None
 
 
+# GitHub reserved top-level paths that must never be treated as organizations.
+_GITHUB_RESERVED_PATHS = frozenset(
+    {
+        "orgs",
+        "users",
+        "settings",
+        "marketplace",
+        "explore",
+        "topics",
+        "trending",
+        "notifications",
+        "sponsors",
+        "about",
+        "pricing",
+        "features",
+        "login",
+        "join",
+        "search",
+        "new",
+        "apps",
+        "collections",
+    }
+)
+
+
+def parse_org_target(target: str) -> str | None:
+    """Resolve a GitHub organization (or user) name from a target string.
+
+    Recognizes the following forms:
+      - ``org:JetBrains`` shorthand prefix.
+      - ``https://github.com/orgs/JetBrains`` canonical org URL.
+      - ``https://github.com/JetBrains`` single-segment owner URL.
+
+    Returns the organization/user login, or ``None`` if the target is not an org.
+    """
+    t = target.strip()
+    if not t or t.startswith("-"):
+        return None
+
+    # Shorthand: org:<name>
+    lowered = t.lower()
+    if lowered.startswith("org:"):
+        name = t[4:].strip().strip("/")
+        return name or None
+
+    # Canonical org URL: https://github.com/orgs/<name>
+    m = re.match(r"^https?://github\.com/orgs/(?P<org>[^/?#]+)/?$", t, re.IGNORECASE)
+    if m:
+        return m.group("org")
+
+    # Single-segment owner URL: https://github.com/<name>
+    m = re.match(r"^https?://github\.com/(?P<org>[^/?#]+)/?$", t, re.IGNORECASE)
+    if m:
+        org = m.group("org")
+        if org.lower() in _GITHUB_RESERVED_PATHS or org.endswith(".git"):
+            return None
+        return org
+
+    return None
+
+
+def is_org_target(target: str) -> bool:
+    """Return True if the target string denotes a GitHub organization/user scan."""
+    return parse_org_target(target) is not None
+
+
 def is_git_repository(path: Path) -> bool:
     """Check if the given path is inside a Git repository."""
     try:
